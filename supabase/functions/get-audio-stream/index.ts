@@ -23,11 +23,10 @@ async function getPipedInstances(): Promise<string[]> {
     const workingInstances = instances
       .filter((inst: any) => 
         inst.api_url && 
-        inst.uptime_24h > 90 &&
-        !inst.registration_disabled
+        inst.uptime_24h > 90
       )
       .sort((a: any, b: any) => (b.uptime_24h || 0) - (a.uptime_24h || 0))
-      .slice(0, 5)
+      .slice(0, 8)
       .map((inst: any) => inst.api_url);
     
     console.log(`Found ${workingInstances.length} healthy Piped instances`);
@@ -43,10 +42,11 @@ function getDefaultPipedInstances(): string[] {
     "https://api.piped.private.coffee",
     "https://pipedapi.darkness.services",
     "https://pipedapi.drgns.space",
+    "https://pipedapi.in.projectsegfau.lt",
   ];
 }
 
-async function getAudioFromPiped(videoId: string): Promise<string> {
+async function getAudioFromPiped(videoId: string): Promise<{ url: string; mimeType: string }> {
   const instances = await getPipedInstances();
   
   for (const instance of instances) {
@@ -54,7 +54,7 @@ async function getAudioFromPiped(videoId: string): Promise<string> {
       console.log(`Trying Piped instance: ${instance}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
       
       const response = await fetch(`${instance}/streams/${videoId}`, {
         signal: controller.signal,
@@ -81,10 +81,25 @@ async function getAudioFromPiped(videoId: string): Promise<string> {
       const audioStreams = data.audioStreams?.filter((s: any) => s.url);
       
       if (audioStreams && audioStreams.length > 0) {
-        // Sort by bitrate, prefer higher quality
-        audioStreams.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-        console.log(`Success! Got audio from ${instance}`);
-        return audioStreams[0].url;
+        // Prefer MP4/M4A formats for better browser compatibility, then webm
+        const sortedStreams = audioStreams.sort((a: any, b: any) => {
+          // Prioritize MP4/M4A over WebM for compatibility
+          const aIsM4a = a.mimeType?.includes('mp4') || a.mimeType?.includes('m4a');
+          const bIsM4a = b.mimeType?.includes('mp4') || b.mimeType?.includes('m4a');
+          
+          if (aIsM4a && !bIsM4a) return -1;
+          if (bIsM4a && !aIsM4a) return 1;
+          
+          // Then sort by bitrate
+          return (b.bitrate || 0) - (a.bitrate || 0);
+        });
+        
+        const bestStream = sortedStreams[0];
+        console.log(`Success! Got audio from ${instance}, mime: ${bestStream.mimeType}`);
+        return { 
+          url: bestStream.url, 
+          mimeType: bestStream.mimeType || 'audio/webm' 
+        };
       }
       
       console.log(`Piped instance ${instance} returned no audio streams`);
@@ -98,22 +113,34 @@ async function getAudioFromPiped(videoId: string): Promise<string> {
   throw new Error("No Piped instance could provide audio");
 }
 
-// Fallback: Use YouTube's direct embed URL (limited but works)
-async function getYouTubeDirectUrl(videoId: string): Promise<string> {
-  // This returns an embeddable URL that can work for some use cases
-  // Note: This is a fallback and may have limitations
-  const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
-  
-  // Validate the video exists
-  const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+// Proxy the audio stream through our edge function to avoid CORS issues
+async function proxyAudioStream(audioUrl: string): Promise<Response> {
+  const response = await fetch(audioUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Range": "bytes=0-",
+    },
+  });
   
   if (!response.ok) {
-    throw new Error("Video not found on YouTube");
+    throw new Error(`Failed to fetch audio: ${response.status}`);
   }
   
-  // Return a playable URL using a YouTube music proxy service
-  // Using noembed as a simple validation, actual audio would need client-side handling
-  throw new Error("Direct YouTube fallback not available");
+  const contentType = response.headers.get("content-type") || "audio/webm";
+  const contentLength = response.headers.get("content-length");
+  
+  return new Response(response.body, {
+    status: response.status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": contentType,
+      ...(contentLength && { "Content-Length": contentLength }),
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
 }
 
 serve(async (req) => {
@@ -122,6 +149,15 @@ serve(async (req) => {
   }
 
   try {
+    const url = new URL(req.url);
+    
+    // Check if this is a proxy request
+    const proxyUrl = url.searchParams.get("proxy");
+    if (proxyUrl) {
+      console.log("Proxying audio stream...");
+      return await proxyAudioStream(decodeURIComponent(proxyUrl));
+    }
+    
     const { videoId } = await req.json();
 
     if (!videoId) {
@@ -130,13 +166,18 @@ serve(async (req) => {
 
     console.log(`Fetching audio for video: ${videoId}`);
 
-    // Try Piped instances with dynamic list
     try {
-      const audioUrl = await getAudioFromPiped(videoId);
+      const { url: audioUrl, mimeType } = await getAudioFromPiped(videoId);
+      
+      // Return the URL with proxy endpoint for CORS-free playback
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(audioUrl)}`;
       
       return new Response(
         JSON.stringify({ 
-          audioUrl, 
+          audioUrl: proxyEndpoint,
+          directUrl: audioUrl, // Also provide direct URL as fallback
+          mimeType,
           success: true,
           source: "piped",
         }),
@@ -145,7 +186,6 @@ serve(async (req) => {
     } catch (pipedError) {
       console.error("All Piped sources failed:", pipedError);
       
-      // Return a more helpful error
       return new Response(
         JSON.stringify({ 
           error: "Audio streaming temporarily unavailable. Please try again later.",
