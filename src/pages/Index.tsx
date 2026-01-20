@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Search, Library, Settings, Plus, Download, Music2, Heart, Sparkles, Clock, TrendingUp } from 'lucide-react';
+import { Home, Search, Library, Settings, Plus, Download, Music2, Heart, Sparkles, Clock, TrendingUp, BarChart3 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { SearchView } from '@/components/SearchView';
@@ -12,6 +12,9 @@ import { Track, Playlist } from '@/types/music';
 import { TrackCard, PlaylistCard } from '@/components/TrackCard';
 import { QuickPlayCard, FeaturedCard, MixCard, SectionHeader } from '@/components/HomeCards';
 import { SettingsPage } from '@/components/SettingsPage';
+import { StatsPage } from '@/components/StatsPage';
+import { FeaturedArtists, FeaturedArtistCircles } from '@/components/ArtistAlbums';
+import { SmartShuffleCard } from '@/components/SmartShuffle';
 import { usePlaylist } from '@/hooks/usePlaylist';
 import { useDownload } from '@/hooks/useDownload';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -20,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 
-type Tab = 'home' | 'search' | 'library' | 'settings';
+type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState<Tab>('home');
@@ -62,9 +65,10 @@ const Index = () => {
       <main className={cn("flex-1 overflow-hidden relative z-10", currentTrack && "pb-24")}>
         <div className="h-full overflow-y-auto px-4 pt-6 pb-24 safe-area-top">
           <AnimatePresence mode="wait">
-            {activeTab === 'home' && <HomeView key="home" />}
+            {activeTab === 'home' && <HomeView key="home" setActiveTab={setActiveTab} />}
             {activeTab === 'search' && <SearchView key="search" />}
             {activeTab === 'library' && <LibraryView key="library" />}
+            {activeTab === 'stats' && <StatsPage key="stats" />}
             {activeTab === 'settings' && <SettingsPage key="settings" />}
           </AnimatePresence>
         </div>
@@ -85,7 +89,7 @@ const Index = () => {
               { id: 'home' as Tab, icon: Home, label: 'Home' },
               { id: 'search' as Tab, icon: Search, label: 'Search' },
               { id: 'library' as Tab, icon: Library, label: 'Library' },
-              { id: 'settings' as Tab, icon: Settings, label: 'Settings' },
+              { id: 'stats' as Tab, icon: BarChart3, label: 'Stats' },
             ].map(({ id, icon: Icon, label }) => (
               <motion.button
                 key={id}
@@ -114,12 +118,35 @@ const Index = () => {
   );
 };
 
-const HomeView = () => {
+const HomeView = ({ setActiveTab }: { setActiveTab: (tab: Tab) => void }) => {
   const [recentlyPlayed, setRecentlyPlayed] = useState<Track[]>([]);
   const [favorites, setFavorites] = useState<Track[]>([]);
   const { user } = useAuth();
   const { playlists } = usePlaylist();
+  const { play } = usePlayer();
   const navigate = useNavigate();
+
+  // Search and play function for smart shuffle and artist albums
+  const searchAndPlay = useCallback(async (query: string): Promise<Track[]> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('youtube-search', {
+        body: { query },
+      });
+      if (error) throw error;
+      return data.results || [];
+    } catch (error) {
+      console.error('Search error:', error);
+      return [];
+    }
+  }, []);
+
+  const handleSearchAndPlay = useCallback(async (query: string) => {
+    const results = await searchAndPlay(query);
+    if (results.length > 0) {
+      play(results[0], results);
+      toast.success(`Playing: ${results[0].title}`);
+    }
+  }, [searchAndPlay, play]);
 
   useEffect(() => {
     if (!user) return;
@@ -232,6 +259,11 @@ const HomeView = () => {
         )}
       </div>
 
+      {/* Smart Shuffle Card */}
+      {user && (
+        <SmartShuffleCard onSearchAndPlay={searchAndPlay} />
+      )}
+
       {/* Quick Play Grid - Like Spotify's top grid */}
       {recentlyPlayed.length > 0 && (
         <div className="grid grid-cols-2 gap-2">
@@ -246,6 +278,9 @@ const HomeView = () => {
           ))}
         </div>
       )}
+
+      {/* Featured Artists */}
+      <FeaturedArtists onSearchAndPlay={handleSearchAndPlay} />
 
       {/* For You Section */}
       {user && (recentlyPlayed.length > 0 || favorites.length > 0) && (
