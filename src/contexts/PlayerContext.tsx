@@ -78,26 +78,72 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
         throw new Error(data.error || 'Could not get audio stream');
       }
 
-      console.log('Got audio URL, loading...');
+      console.log('Got audio URL, loading...', data.mimeType);
       
-      audioRef.current.src = data.audioUrl;
-      audioRef.current.load();
+      const audio = audioRef.current;
       
-      await audioRef.current.play();
+      // Try the proxied URL first, fallback to direct if needed
+      const tryPlayAudio = async (url: string): Promise<boolean> => {
+        return new Promise((resolve) => {
+          audio.src = url;
+          
+          const handleCanPlay = () => {
+            cleanup();
+            resolve(true);
+          };
+          
+          const handleError = () => {
+            cleanup();
+            resolve(false);
+          };
+          
+          const cleanup = () => {
+            audio.removeEventListener('canplaythrough', handleCanPlay);
+            audio.removeEventListener('error', handleError);
+          };
+          
+          audio.addEventListener('canplaythrough', handleCanPlay, { once: true });
+          audio.addEventListener('error', handleError, { once: true });
+          
+          audio.load();
+          
+          // Timeout after 8 seconds
+          setTimeout(() => {
+            cleanup();
+            resolve(false);
+          }, 8000);
+        });
+      };
+      
+      // Try proxied URL first
+      let canPlay = await tryPlayAudio(data.audioUrl);
+      
+      // If proxy fails and we have a direct URL, try that
+      if (!canPlay && data.directUrl) {
+        console.log('Proxy failed, trying direct URL...');
+        canPlay = await tryPlayAudio(data.directUrl);
+      }
+      
+      if (!canPlay) {
+        throw new Error('Could not load audio from any source');
+      }
+      
+      await audio.play();
       setState(prev => ({ ...prev, isPlaying: true }));
       
-      // Save to recently played
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from('recently_played').insert({
-          user_id: user.id,
-          video_id: track.videoId,
-          title: track.title,
-          artist: track.artist,
-          thumbnail_url: track.thumbnailUrl,
-          duration: track.duration,
-        });
-      }
+      // Save to recently played (fire and forget)
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          supabase.from('recently_played').insert({
+            user_id: user.id,
+            video_id: track.videoId,
+            title: track.title,
+            artist: track.artist,
+            thumbnail_url: track.thumbnailUrl,
+            duration: track.duration,
+          }).then(() => {});
+        }
+      });
       
     } catch (error) {
       console.error('Error loading track:', error);
