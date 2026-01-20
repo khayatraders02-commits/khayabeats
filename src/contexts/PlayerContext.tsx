@@ -12,6 +12,8 @@ interface PlayerContextType extends PlayerState {
   seek: (time: number) => void;
   setVolume: (volume: number) => void;
   addToQueue: (track: Track) => void;
+  removeFromQueue: (index: number) => void;
+  reorderQueue: (newQueue: Track[]) => void;
   toggleShuffle: () => void;
   toggleRepeat: () => void;
   isLoading: boolean;
@@ -274,6 +276,19 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     toast.success('Added to queue');
   }, []);
 
+  const removeFromQueue = useCallback((index: number) => {
+    setState(prev => {
+      const newQueue = [...prev.queue];
+      newQueue.splice(index, 1);
+      return { ...prev, queue: newQueue };
+    });
+    toast.success('Removed from queue');
+  }, []);
+
+  const reorderQueue = useCallback((newQueue: Track[]) => {
+    setState(prev => ({ ...prev, queue: newQueue }));
+  }, []);
+
   const toggleShuffle = useCallback(() => {
     setState(prev => ({ ...prev, shuffle: !prev.shuffle }));
   }, []);
@@ -338,6 +353,8 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
         seek,
         setVolume,
         addToQueue,
+        removeFromQueue,
+        reorderQueue,
         toggleShuffle,
         toggleRepeat,
         isLoading,
