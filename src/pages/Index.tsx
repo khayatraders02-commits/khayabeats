@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Home, Search, Library, User, Plus, Download, Music2, Heart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,7 +22,7 @@ type Tab = 'home' | 'search' | 'library' | 'profile';
 const Index = () => {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [showFullPlayer, setShowFullPlayer] = useState(false);
-  const { user, signInWithGoogle, signOut, loading } = useAuth();
+  const { user, signOut, loading } = useAuth();
   const { currentTrack } = usePlayer();
 
   if (loading) {
@@ -48,7 +49,7 @@ const Index = () => {
             {activeTab === 'search' && <SearchView key="search" />}
             {activeTab === 'library' && <LibraryView key="library" />}
             {activeTab === 'profile' && (
-              <ProfileView key="profile" user={user} onSignIn={signInWithGoogle} onSignOut={signOut} />
+              <ProfileView key="profile" user={user} onSignOut={signOut} />
             )}
           </AnimatePresence>
         </div>
@@ -242,36 +243,40 @@ const LibraryView = () => {
   );
 };
 
-const ProfileView = ({ user, onSignIn, onSignOut }: { user: any; onSignIn: () => void; onSignOut: () => void }) => (
-  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-    <h1 className="text-2xl font-bold mb-6">Profile</h1>
-    {user ? (
-      <div className="space-y-6">
-        <div className="flex items-center gap-4 p-4 rounded-2xl kb-glass">
-          <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden">
-            {user.user_metadata?.avatar_url ? (
-              <img src={user.user_metadata.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
-            ) : <User size={28} className="text-primary" />}
+const ProfileView = ({ user, onSignOut }: { user: any; onSignOut: () => void }) => {
+  const navigate = useNavigate();
+  
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <h1 className="text-2xl font-bold mb-6">Profile</h1>
+      {user ? (
+        <div className="space-y-6">
+          <div className="flex items-center gap-4 p-4 rounded-2xl kb-glass">
+            <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden">
+              {user.user_metadata?.avatar_url ? (
+                <img src={user.user_metadata.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+              ) : <User size={28} className="text-primary" />}
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">{user.user_metadata?.full_name || 'Music Lover'}</h2>
+              <p className="text-muted-foreground text-sm">{user.email}</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-semibold">{user.user_metadata?.full_name || 'Music Lover'}</h2>
-            <p className="text-muted-foreground text-sm">{user.email}</p>
+          <Button onClick={onSignOut} variant="destructive" className="w-full">Sign Out</Button>
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <div className="w-24 h-24 mx-auto mb-6 rounded-full kb-gradient-bg flex items-center justify-center">
+            <User size={40} className="text-primary-foreground" />
           </div>
+          <h2 className="text-xl font-semibold mb-2">Sign in to KhayaBeats</h2>
+          <p className="text-muted-foreground mb-6">Save your favorites and sync across devices</p>
+          <Button onClick={() => navigate('/auth')} className="w-full kb-gradient-bg">Sign In / Sign Up</Button>
         </div>
-        <Button onClick={onSignOut} variant="destructive" className="w-full">Sign Out</Button>
-      </div>
-    ) : (
-      <div className="text-center py-12">
-        <div className="w-24 h-24 mx-auto mb-6 rounded-full kb-gradient-bg flex items-center justify-center">
-          <User size={40} className="text-primary-foreground" />
-        </div>
-        <h2 className="text-xl font-semibold mb-2">Sign in to KhayaBeats</h2>
-        <p className="text-muted-foreground mb-6">Save your favorites and sync across devices</p>
-        <Button onClick={onSignIn} className="w-full kb-gradient-bg">Sign in with Google</Button>
-      </div>
-    )}
-  </motion.div>
-);
+      )}
+    </motion.div>
+  );
+};
 
 const getTimeOfDay = () => {
   const hour = new Date().getHours();
