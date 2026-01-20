@@ -7,11 +7,12 @@ import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 // Popular artist data with their most popular songs
+// Using reliable image URLs
 const FEATURED_ARTISTS = [
   {
     id: 'drake',
     name: 'Drake',
-    image: 'https://i.scdn.co/image/ab6761610000e5eb4293385d324db8558179afd9',
+    image: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&h=400&fit=crop',
     gradient: 'from-amber-600 to-orange-800',
     topSongs: [
       'God\'s Plan',
@@ -29,7 +30,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'weeknd',
     name: 'The Weeknd',
-    image: 'https://i.scdn.co/image/ab6761610000e5eb214f3cf1cbe7139c1e26f5d7',
+    image: 'https://images.unsplash.com/photo-1619983081563-430f63602796?w=400&h=400&fit=crop',
     gradient: 'from-red-600 to-rose-900',
     topSongs: [
       'Blinding Lights',
@@ -47,7 +48,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'taylor',
     name: 'Taylor Swift',
-    image: 'https://i.scdn.co/image/ab6761610000e5eb6a224073987b930f99adc706',
+    image: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=400&h=400&fit=crop',
     gradient: 'from-purple-500 to-pink-600',
     topSongs: [
       'Anti-Hero',
@@ -65,7 +66,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'kendrick',
     name: 'Kendrick Lamar',
-    image: 'https://i.scdn.co/image/ab6761610000e5eb437b9e2a82505b3d93ff1022',
+    image: 'https://images.unsplash.com/photo-1571609860754-01a54f59524e?w=400&h=400&fit=crop',
     gradient: 'from-slate-700 to-slate-900',
     topSongs: [
       'HUMBLE.',
@@ -83,7 +84,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'doja',
     name: 'Doja Cat',
-    image: 'https://i.scdn.co/image/ab6761610000e5eb9ed8e063d6cde10c2d5c1fda',
+    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop',
     gradient: 'from-pink-500 to-fuchsia-700',
     topSongs: [
       'Say So',
@@ -101,7 +102,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'travis',
     name: 'Travis Scott',
-    image: 'https://i.scdn.co/image/ab6761610000e5eb19c2790744c792d05570bb71',
+    image: 'https://images.unsplash.com/photo-1598387993441-a364f854c3e1?w=400&h=400&fit=crop',
     gradient: 'from-orange-700 to-amber-900',
     topSongs: [
       'SICKO MODE',

@@ -18,6 +18,8 @@ import { SmartShuffleCard } from '@/components/SmartShuffle';
 import FriendsButton from '@/components/FriendsAndMessages';
 import JamSessionButton from '@/components/JamSession';
 import { ContactPage } from '@/components/ContactPage';
+import { Onboarding, useOnboarding } from '@/components/Onboarding';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { usePlaylist } from '@/hooks/usePlaylist';
 import { useDownload } from '@/hooks/useDownload';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -34,6 +36,19 @@ const Index = () => {
   const { user, signOut, loading } = useAuth();
   const { currentTrack } = usePlayer();
   const navigate = useNavigate();
+  const { showOnboarding, completeOnboarding } = useOnboarding();
+  const { requestPermission, isEnabled: notificationsEnabled } = usePushNotifications();
+
+  // Request notification permission after onboarding
+  useEffect(() => {
+    if (!showOnboarding && user && !notificationsEnabled) {
+      // Delay to avoid overwhelming user right after onboarding
+      const timer = setTimeout(() => {
+        requestPermission();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showOnboarding, user, notificationsEnabled, requestPermission]);
 
   if (loading) {
     return (
@@ -58,12 +73,18 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col overflow-hidden">
-      {/* Ambient background effects */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-0 w-80 h-80 bg-accent/10 rounded-full blur-3xl" />
-      </div>
+    <>
+      {/* Onboarding */}
+      <AnimatePresence>
+        {showOnboarding && <Onboarding onComplete={completeOnboarding} />}
+      </AnimatePresence>
+
+      <div className="min-h-screen bg-background flex flex-col overflow-hidden">
+        {/* Ambient background effects */}
+        <div className="fixed inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-0 w-80 h-80 bg-accent/10 rounded-full blur-3xl" />
+        </div>
 
       <main className={cn("flex-1 overflow-hidden relative z-10", currentTrack && "pb-24")}>
         <div className="h-full overflow-y-auto px-4 pt-6 pb-24 safe-area-top">
@@ -118,7 +139,8 @@ const Index = () => {
           </div>
         </nav>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 
