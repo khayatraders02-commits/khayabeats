@@ -5,13 +5,16 @@ export interface Track {
   artist: string;
   thumbnailUrl: string;
   duration: string;
+  album?: string;
+  isDownloaded?: boolean;
 }
 
 export interface Playlist {
   id: string;
   name: string;
   coverUrl?: string;
-  tracks: Track[];
+  trackCount?: number;
+  tracks?: Track[];
   createdAt: Date;
 }
 
@@ -33,10 +36,12 @@ export interface LyricsLine {
 }
 
 export interface SearchResult {
-  id: string;
-  videoId: string;
-  title: string;
-  artist: string;
-  thumbnailUrl: string;
-  duration: string;
+  tracks: Track[];
+  hasMore: boolean;
+  nextPageToken?: string;
+}
+
+export interface DownloadedTrack extends Track {
+  audioBlob: Blob;
+  downloadedAt: Date;
 }
