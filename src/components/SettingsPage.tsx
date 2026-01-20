@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
   Settings, ChevronRight, User, Bell, Shield, FileText, 
-  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone
+  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone, RefreshCw
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -15,12 +15,16 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { useOnboarding } from '@/components/Onboarding';
 
 export const SettingsPage = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState(user?.user_metadata?.display_name || '');
   const [saving, setSaving] = useState(false);
+  const { isEnabled: notificationsEnabled, requestPermission, isSupported } = usePushNotifications();
+  const { resetOnboarding } = useOnboarding();
 
   const handleSaveProfile = async () => {
     if (!user) return;
@@ -164,8 +168,14 @@ export const SettingsPage = () => {
             <SettingItem 
               icon={Bell} 
               title="Notifications" 
-              subtitle="Push notifications and alerts"
-              rightElement={<Switch defaultChecked />}
+              subtitle={notificationsEnabled ? "Enabled" : "Disabled"}
+              rightElement={
+                <Switch 
+                  checked={notificationsEnabled} 
+                  onCheckedChange={() => !notificationsEnabled && requestPermission()}
+                  disabled={!isSupported}
+                />
+              }
             />
           </div>
         </div>

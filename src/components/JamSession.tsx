@@ -84,35 +84,36 @@ export const JamSessionButton = () => {
     if (!user) return;
 
     const checkActiveSession = async () => {
-      // Check if user is hosting
-      const { data: hosting } = await supabase
+      // Check if user is hosting (use maybeSingle to avoid 406 error)
+      const { data: hostingSessions } = await supabase
         .from('jam_sessions')
         .select('*')
         .eq('host_user_id', user.id)
         .eq('is_active', true)
-        .single();
+        .limit(1);
 
-      if (hosting) {
-        setActiveSession(hosting as unknown as JamSession);
+      if (hostingSessions && hostingSessions.length > 0) {
+        setActiveSession(hostingSessions[0] as unknown as JamSession);
         return;
       }
 
       // Check if user is participating
-      const { data: participating } = await supabase
+      const { data: participatingSessions } = await supabase
         .from('jam_participants')
         .select('jam_session_id')
         .eq('user_id', user.id)
-        .single();
+        .limit(1);
 
-      if (participating) {
-        const { data: session } = await supabase
+      if (participatingSessions && participatingSessions.length > 0) {
+        const { data: sessions } = await supabase
           .from('jam_sessions')
           .select('*')
-          .eq('id', participating.jam_session_id)
-          .single();
+          .eq('id', participatingSessions[0].jam_session_id)
+          .eq('is_active', true)
+          .limit(1);
 
-        if (session) {
-          setActiveSession(session as unknown as JamSession);
+        if (sessions && sessions.length > 0) {
+          setActiveSession(sessions[0] as unknown as JamSession);
         }
       }
     };
