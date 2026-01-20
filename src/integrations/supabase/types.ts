@@ -80,6 +80,143 @@ export type Database = {
         }
         Relationships: []
       }
+      friend_requests: {
+        Row: {
+          created_at: string
+          from_user_id: string
+          id: string
+          status: string
+          to_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          from_user_id: string
+          id?: string
+          status?: string
+          to_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          from_user_id?: string
+          id?: string
+          status?: string
+          to_user_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      friendships: {
+        Row: {
+          created_at: string
+          id: string
+          user1_id: string
+          user2_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          user1_id: string
+          user2_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          user1_id?: string
+          user2_id?: string
+        }
+        Relationships: []
+      }
+      jam_participants: {
+        Row: {
+          id: string
+          jam_session_id: string
+          joined_at: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          jam_session_id: string
+          joined_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          jam_session_id?: string
+          joined_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "jam_participants_jam_session_id_fkey"
+            columns: ["jam_session_id"]
+            isOneToOne: false
+            referencedRelation: "jam_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      jam_sessions: {
+        Row: {
+          created_at: string
+          current_track_data: Json | null
+          current_track_id: string | null
+          host_user_id: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_track_data?: Json | null
+          current_track_id?: string | null
+          host_user_id: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_track_data?: Json | null
+          current_track_id?: string | null
+          host_user_id?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      messages: {
+        Row: {
+          content: string
+          created_at: string
+          from_user_id: string
+          id: string
+          read: boolean
+          to_user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          from_user_id: string
+          id?: string
+          read?: boolean
+          to_user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          from_user_id?: string
+          id?: string
+          read?: boolean
+          to_user_id?: string
+        }
+        Relationships: []
+      }
       playlist_songs: {
         Row: {
           artist: string | null
@@ -205,6 +342,33 @@ export type Database = {
           title?: string
           user_id?: string
           video_id?: string
+        }
+        Relationships: []
+      }
+      user_presence: {
+        Row: {
+          current_track_data: Json | null
+          current_track_id: string | null
+          id: string
+          is_playing: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          current_track_data?: Json | null
+          current_track_id?: string | null
+          id?: string
+          is_playing?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          current_track_data?: Json | null
+          current_track_id?: string | null
+          id?: string
+          is_playing?: boolean
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
