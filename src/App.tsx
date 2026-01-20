@@ -8,6 +8,7 @@ import { PlayerProvider } from "@/contexts/PlayerContext";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import { TermsPage, PrivacyPage } from "./components/LegalPages";
 
 const queryClient = new QueryClient();
 
@@ -22,6 +23,8 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<Auth />} />
+              <Route path="/terms" element={<TermsPage />} />
+              <Route path="/privacy" element={<PrivacyPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
