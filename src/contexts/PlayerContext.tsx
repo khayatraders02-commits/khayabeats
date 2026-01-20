@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from 'react';
 import { Track, PlayerState } from '@/types/music';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 interface PlayerContextType extends PlayerState {
   play: (track?: Track, queue?: Track[]) => void;
@@ -12,7 +14,7 @@ interface PlayerContextType extends PlayerState {
   addToQueue: (track: Track) => void;
   toggleShuffle: () => void;
   toggleRepeat: () => void;
-  audioRef: React.RefObject<HTMLAudioElement>;
+  isLoading: boolean;
 }
 
 const PlayerContext = createContext<PlayerContextType | null>(null);
@@ -30,7 +32,8 @@ interface PlayerProviderProps {
 }
 
 export const PlayerProvider = ({ children }: PlayerProviderProps) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [state, setState] = useState<PlayerState>({
     currentTrack: null,
     isPlaying: false,
@@ -43,29 +46,102 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     repeat: 'off',
   });
 
+  // Initialize audio element
+  useEffect(() => {
+    audioRef.current = new Audio();
+    audioRef.current.volume = state.volume;
+    
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  // Fetch audio stream and play
+  const loadAndPlayTrack = useCallback(async (track: Track) => {
+    if (!audioRef.current) return;
+    
+    setIsLoading(true);
+    
+    try {
+      console.log('Fetching audio stream for:', track.title);
+      
+      const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+        body: { videoId: track.videoId },
+      });
+
+      if (error) throw error;
+      
+      if (!data.success || !data.audioUrl) {
+        throw new Error(data.error || 'Could not get audio stream');
+      }
+
+      console.log('Got audio URL, loading...');
+      
+      audioRef.current.src = data.audioUrl;
+      audioRef.current.load();
+      
+      await audioRef.current.play();
+      setState(prev => ({ ...prev, isPlaying: true }));
+      
+      // Save to recently played
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from('recently_played').insert({
+          user_id: user.id,
+          video_id: track.videoId,
+          title: track.title,
+          artist: track.artist,
+          thumbnail_url: track.thumbnailUrl,
+          duration: track.duration,
+        });
+      }
+      
+    } catch (error) {
+      console.error('Error loading track:', error);
+      toast.error('Failed to play track. Try another one.');
+      setState(prev => ({ ...prev, isPlaying: false }));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const play = useCallback((track?: Track, queue?: Track[]) => {
     if (track) {
       const newQueue = queue || [track];
       const index = newQueue.findIndex(t => t.videoId === track.videoId);
+      
       setState(prev => ({
         ...prev,
         currentTrack: track,
         queue: newQueue,
         queueIndex: index >= 0 ? index : 0,
-        isPlaying: true,
       }));
-    } else {
+      
+      loadAndPlayTrack(track);
+    } else if (audioRef.current && state.currentTrack) {
+      audioRef.current.play();
       setState(prev => ({ ...prev, isPlaying: true }));
     }
-  }, []);
+  }, [loadAndPlayTrack, state.currentTrack]);
 
   const pause = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
     setState(prev => ({ ...prev, isPlaying: false }));
   }, []);
 
   const togglePlay = useCallback(() => {
-    setState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
-  }, []);
+    if (state.isPlaying) {
+      pause();
+    } else if (audioRef.current && state.currentTrack) {
+      audioRef.current.play();
+      setState(prev => ({ ...prev, isPlaying: true }));
+    }
+  }, [state.isPlaying, state.currentTrack, pause]);
 
   const next = useCallback(() => {
     setState(prev => {
@@ -83,44 +159,52 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
         }
       }
       
+      const nextTrack = prev.queue[nextIndex];
+      loadAndPlayTrack(nextTrack);
+      
       return {
         ...prev,
         queueIndex: nextIndex,
-        currentTrack: prev.queue[nextIndex],
+        currentTrack: nextTrack,
         progress: 0,
       };
     });
-  }, []);
+  }, [loadAndPlayTrack]);
 
   const previous = useCallback(() => {
+    if (audioRef.current && state.progress > 3) {
+      audioRef.current.currentTime = 0;
+      setState(prev => ({ ...prev, progress: 0 }));
+      return;
+    }
+    
     setState(prev => {
-      if (prev.progress > 3) {
-        // If more than 3 seconds in, restart the track
-        if (audioRef.current) audioRef.current.currentTime = 0;
-        return { ...prev, progress: 0 };
-      }
-      
       const prevIndex = prev.queueIndex - 1;
       if (prevIndex < 0) {
         if (prev.repeat === 'all') {
+          const lastTrack = prev.queue[prev.queue.length - 1];
+          loadAndPlayTrack(lastTrack);
           return {
             ...prev,
             queueIndex: prev.queue.length - 1,
-            currentTrack: prev.queue[prev.queue.length - 1],
+            currentTrack: lastTrack,
             progress: 0,
           };
         }
         return prev;
       }
       
+      const prevTrack = prev.queue[prevIndex];
+      loadAndPlayTrack(prevTrack);
+      
       return {
         ...prev,
         queueIndex: prevIndex,
-        currentTrack: prev.queue[prevIndex],
+        currentTrack: prevTrack,
         progress: 0,
       };
     });
-  }, []);
+  }, [state.progress, loadAndPlayTrack]);
 
   const seek = useCallback((time: number) => {
     if (audioRef.current) {
@@ -141,6 +225,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
       ...prev,
       queue: [...prev.queue, track],
     }));
+    toast.success('Added to queue');
   }, []);
 
   const toggleShuffle = useCallback(() => {
@@ -176,30 +261,24 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
       }
     };
 
+    const handleError = (e: Event) => {
+      console.error('Audio error:', e);
+      toast.error('Audio playback error. Trying next track...');
+      next();
+    };
+
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('durationchange', handleDurationChange);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
   }, [next, state.repeat]);
-
-  // Handle play/pause
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (state.isPlaying) {
-      audio.play().catch(() => {
-        setState(prev => ({ ...prev, isPlaying: false }));
-      });
-    } else {
-      audio.pause();
-    }
-  }, [state.isPlaying, state.currentTrack]);
 
   return (
     <PlayerContext.Provider
@@ -215,10 +294,9 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
         addToQueue,
         toggleShuffle,
         toggleRepeat,
-        audioRef,
+        isLoading,
       }}
     >
-      <audio ref={audioRef} />
       {children}
     </PlayerContext.Provider>
   );
