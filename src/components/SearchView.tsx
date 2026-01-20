@@ -7,12 +7,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { GenreBrowser } from '@/components/GenreBrowser';
 
 export const SearchView = () => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [showGenres, setShowGenres] = useState(true);
   const { user } = useAuth();
 
   // Fetch user's favorites
@@ -36,9 +38,11 @@ export const SearchView = () => {
   const searchMusic = useCallback(async (searchQuery: string) => {
     if (!searchQuery.trim()) {
       setResults([]);
+      setShowGenres(true);
       return;
     }
 
+    setShowGenres(false);
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('youtube-search', {
@@ -171,6 +175,14 @@ export const SearchView = () => {
               className="text-center py-20 text-muted-foreground"
             >
               No results found for "{query}"
+            </motion.div>
+          ) : showGenres ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <GenreBrowser />
             </motion.div>
           ) : (
             <motion.div

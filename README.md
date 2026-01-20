@@ -1,73 +1,302 @@
-# Welcome to your Lovable project
+# KhayaBeats 🎵
 
-## Project info
+A modern, production-ready music streaming app built with React, TypeScript, and Capacitor for Android/iOS deployment.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+![KhayaBeats](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Platform](https://img.shields.io/badge/platform-Web%20%7C%20Android%20%7C%20iOS-green.svg)
 
-## How can I edit this code?
+## ✨ Features
 
-There are several ways of editing your application.
+- 🎵 **Music Streaming** - Search and play millions of songs
+- 📝 **Synced Lyrics** - Real-time synchronized lyrics display
+- 🎨 **Beautiful UI** - Spotify-inspired dark theme with smooth animations
+- 📊 **Stats & Analytics** - View your top songs, artists, and listening time
+- 🎲 **Smart Shuffle** - AI-powered playlist based on your taste
+- 👥 **Jam Sessions** - Listen together with friends in real-time
+- 💬 **Messaging** - Chat with friends and share what you're listening to
+- 📥 **Offline Downloads** - Save songs for offline playback
+- 📱 **Cross-Platform** - Works on Web, Android, and iOS
 
-**Use Lovable**
+## 🛠️ Tech Stack
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+- **Frontend**: React 18, TypeScript, Tailwind CSS
+- **UI Components**: shadcn/ui, Radix UI
+- **Animations**: Framer Motion
+- **Backend**: Supabase (Auth, Database, Edge Functions)
+- **Mobile**: Capacitor for native Android/iOS
+- **Build Tool**: Vite
 
-Changes made via Lovable will be committed automatically to this repo.
+## 📋 Prerequisites
 
-**Use your preferred IDE**
+Before you begin, ensure you have the following installed:
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+- [Node.js](https://nodejs.org/) (v18 or higher)
+- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/) or [bun](https://bun.sh/)
+- [Git](https://git-scm.com/)
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+**For Android Development:**
+- [Android Studio](https://developer.android.com/studio) (with Android SDK)
+- [Java JDK 17+](https://adoptium.net/)
 
-Follow these steps:
+**For iOS Development (macOS only):**
+- [Xcode](https://developer.apple.com/xcode/) (latest version)
+- macOS 12 or later
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+## 🚀 Quick Start (Web)
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+### 1. Clone the Repository
 
-# Step 3: Install the necessary dependencies.
-npm i
+```bash
+git clone https://github.com/YOUR_USERNAME/khayabeats.git
+cd khayabeats
+```
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+### 2. Install Dependencies
+
+```bash
+npm install
+# or
+yarn install
+# or
+bun install
+```
+
+### 3. Set Up Environment Variables
+
+Create a `.env` file in the root directory:
+
+```env
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
+VITE_SUPABASE_PROJECT_ID=your_project_id
+```
+
+> **Note**: If you're using Lovable Cloud, these are automatically configured.
+
+### 4. Start Development Server
+
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+The app will be available at `http://localhost:5173`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 📱 Building the Android APK
 
-**Use GitHub Codespaces**
+### Step 1: Install Android Development Tools
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+1. **Download Android Studio** from https://developer.android.com/studio
+2. **Install Android SDK** (minimum SDK 22, target SDK 34)
+3. **Set up environment variables**:
 
-## What technologies are used for this project?
+```bash
+# Add to ~/.bashrc or ~/.zshrc (Linux/Mac)
+export ANDROID_HOME=$HOME/Android/Sdk
+export PATH=$PATH:$ANDROID_HOME/emulator
+export PATH=$PATH:$ANDROID_HOME/platform-tools
+export PATH=$PATH:$ANDROID_HOME/tools
 
-This project is built with:
+# Windows (System Environment Variables)
+ANDROID_HOME = C:\Users\YOUR_USER\AppData\Local\Android\Sdk
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+### Step 2: Add Android Platform
 
-## How can I deploy this project?
+```bash
+# Add Android platform to Capacitor
+npx cap add android
+```
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+### Step 3: Build the Web App
 
-## Can I connect a custom domain to my Lovable project?
+```bash
+npm run build
+```
 
-Yes, you can!
+### Step 4: Sync with Native Project
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+```bash
+npx cap sync android
+```
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+### Step 5: Open in Android Studio
+
+```bash
+npx cap open android
+```
+
+### Step 6: Build APK in Android Studio
+
+1. Open Android Studio (it will open automatically)
+2. Wait for Gradle sync to complete
+3. Go to **Build → Build Bundle(s) / APK(s) → Build APK(s)**
+4. The APK will be generated at:
+   ```
+   android/app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+### Step 7: Build Release APK (For Distribution)
+
+1. Generate a signing key:
+   ```bash
+   keytool -genkey -v -keystore khayabeats-release.keystore -alias khayabeats -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. Create `android/key.properties`:
+   ```properties
+   storePassword=YOUR_STORE_PASSWORD
+   keyPassword=YOUR_KEY_PASSWORD
+   keyAlias=khayabeats
+   storeFile=../khayabeats-release.keystore
+   ```
+
+3. Build signed APK:
+   - In Android Studio: **Build → Generate Signed Bundle/APK**
+   - Select APK → Choose your keystore → Build
+
+## 📱 Building for iOS
+
+> **Note**: iOS builds require macOS with Xcode installed.
+
+### Step 1: Add iOS Platform
+
+```bash
+npx cap add ios
+```
+
+### Step 2: Build and Sync
+
+```bash
+npm run build
+npx cap sync ios
+```
+
+### Step 3: Open in Xcode
+
+```bash
+npx cap open ios
+```
+
+### Step 4: Configure Signing
+
+1. In Xcode, select your project in the navigator
+2. Go to **Signing & Capabilities**
+3. Select your development team
+4. Xcode will automatically manage signing
+
+### Step 5: Build and Run
+
+1. Select a simulator or connected device
+2. Press **Cmd + R** to build and run
+
+## 🔧 Development Commands
+
+```bash
+# Start development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+
+# Run tests
+npm run test
+
+# Lint code
+npm run lint
+
+# Sync Capacitor after code changes
+npx cap sync
+
+# Run on Android device/emulator
+npx cap run android
+
+# Run on iOS simulator
+npx cap run ios
+
+# Live reload on device (during development)
+npm run dev
+# Then in another terminal:
+npx cap run android -l --external
+```
+
+## 📁 Project Structure
+
+```
+khayabeats/
+├── android/              # Android native project
+├── ios/                  # iOS native project
+├── public/               # Static assets
+├── src/
+│   ├── components/       # React components
+│   │   ├── ui/          # shadcn/ui components
+│   │   ├── Player.tsx   # Music player
+│   │   ├── QueueView.tsx
+│   │   └── ...
+│   ├── contexts/        # React contexts
+│   ├── hooks/           # Custom hooks
+│   ├── pages/           # Page components
+│   ├── types/           # TypeScript types
+│   └── lib/             # Utilities
+├── supabase/
+│   ├── functions/       # Edge functions
+│   └── config.toml      # Supabase config
+├── capacitor.config.ts  # Capacitor config
+└── package.json
+```
+
+## 🔑 API Keys & Secrets
+
+The app requires the following secrets (configured in Supabase):
+
+| Secret | Description |
+|--------|-------------|
+| `YOUTUBE_API_KEY` | For searching music (optional) |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_ANON_KEY` | Supabase anonymous key |
+| `SUPABASE_SERVICE_ROLE_KEY` | For edge functions |
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Build fails with "SDK not found"**
+```bash
+# Make sure ANDROID_HOME is set correctly
+echo $ANDROID_HOME
+# Should output your SDK path
+```
+
+**Capacitor sync fails**
+```bash
+# Clear and reinstall
+rm -rf node_modules
+npm install
+npx cap sync
+```
+
+**App crashes on launch**
+- Check Android Studio's Logcat for error messages
+- Ensure all environment variables are set
+- Try clearing app data and reinstalling
+
+**Audio not playing**
+- This is normal during development with hot reload
+- Build a full APK for proper audio playback
+
+## 📞 Contact & Support
+
+- **Phone**: +27 61 939 1305
+- **Alternative**: +27 69 458 1417  
+- **WhatsApp**: Available on both numbers
+- **Email**: khayatraders02@gmail.com
+
+## 📄 License
+
+This project is private and proprietary. All rights reserved.
+
+---
+
+Built with ❤️ using [Lovable](https://lovable.dev)
