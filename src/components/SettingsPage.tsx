@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
   Settings, ChevronRight, User, Bell, Shield, FileText, 
-  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2
+  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -221,6 +221,13 @@ export const SettingsPage = () => {
               icon={Shield} 
               title="Privacy Policy"
               onClick={() => navigate('/privacy')}
+            />
+            <Separator className="mx-4" />
+            <SettingItem 
+              icon={Phone} 
+              title="Contact Us"
+              subtitle="Get in touch with support"
+              onClick={() => navigate('/?tab=contact')}
             />
             <Separator className="mx-4" />
             <SettingItem 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Search, Library, Settings, Plus, Download, Music2, Heart, Sparkles, Clock, TrendingUp, BarChart3 } from 'lucide-react';
+import { Home, Search, Library, Settings, Plus, Download, Music2, Heart, Sparkles, Clock, TrendingUp, BarChart3, Users, MessageCircle, Phone } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { SearchView } from '@/components/SearchView';
@@ -15,6 +15,9 @@ import { SettingsPage } from '@/components/SettingsPage';
 import { StatsPage } from '@/components/StatsPage';
 import { FeaturedArtists, FeaturedArtistCircles } from '@/components/ArtistAlbums';
 import { SmartShuffleCard } from '@/components/SmartShuffle';
+import FriendsButton from '@/components/FriendsAndMessages';
+import JamSessionButton from '@/components/JamSession';
+import { ContactPage } from '@/components/ContactPage';
 import { usePlaylist } from '@/hooks/usePlaylist';
 import { useDownload } from '@/hooks/useDownload';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -23,7 +26,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 
-type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings';
+type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings' | 'contact';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState<Tab>('home');
@@ -70,6 +73,7 @@ const Index = () => {
             {activeTab === 'library' && <LibraryView key="library" />}
             {activeTab === 'stats' && <StatsPage key="stats" />}
             {activeTab === 'settings' && <SettingsPage key="settings" />}
+            {activeTab === 'contact' && <ContactPage key="contact" />}
           </AnimatePresence>
         </div>
       </main>
@@ -247,16 +251,23 @@ const HomeView = ({ setActiveTab }: { setActiveTab: (tab: Tab) => void }) => {
             {user ? 'Ready to discover new music?' : 'Sign in to personalize your experience'}
           </p>
         </div>
-        {user && (
-          <motion.div 
-            className="w-10 h-10 rounded-full kb-gradient-bg flex items-center justify-center"
-            whileTap={{ scale: 0.9 }}
-          >
-            <span className="text-white font-bold">
-              {user.email?.charAt(0).toUpperCase()}
-            </span>
-          </motion.div>
-        )}
+        <div className="flex items-center gap-2">
+          {user && (
+            <>
+              <JamSessionButton />
+              <FriendsButton />
+              <motion.button 
+                onClick={() => setActiveTab('settings')}
+                className="w-10 h-10 rounded-full kb-gradient-bg flex items-center justify-center"
+                whileTap={{ scale: 0.9 }}
+              >
+                <span className="text-white font-bold">
+                  {user.email?.charAt(0).toUpperCase()}
+                </span>
+              </motion.button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Smart Shuffle Card */}

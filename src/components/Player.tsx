@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Play, Pause, SkipBack, SkipForward, Heart, Shuffle, Repeat, Repeat1, 
-  Volume2, VolumeX, ChevronDown, ListMusic, Loader2, Music2 
+  Volume2, VolumeX, ChevronDown, ListMusic, Loader2, Music2, List, Share2, Cast
 } from 'lucide-react';
 import { usePlayer } from '@/contexts/PlayerContext';
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
 import { supabase } from '@/integrations/supabase/client';
 import { LyricsLine } from '@/types/music';
+import { QueueView } from '@/components/QueueView';
+import { DeviceConnectButton } from '@/components/DeviceConnect';
 
 interface MiniPlayerProps {
   onExpand: () => void;
@@ -127,6 +129,7 @@ export const FullPlayer = ({ onCollapse }: FullPlayerProps) => {
   } = usePlayer();
   
   const [showLyrics, setShowLyrics] = useState(false);
+  const [showQueue, setShowQueue] = useState(false);
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [syncedLyrics, setSyncedLyrics] = useState<LyricsLine[] | null>(null);
   const [activeLyricIndex, setActiveLyricIndex] = useState(0);
@@ -255,16 +258,32 @@ export const FullPlayer = ({ onCollapse }: FullPlayerProps) => {
           <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
             Now Playing
           </span>
-          <motion.button 
-            onClick={() => setShowLyrics(!showLyrics)} 
-            className={cn(
-              "p-2 -mr-2 rounded-full transition-colors",
-              showLyrics ? "bg-primary/20 text-primary" : "hover:bg-muted/50"
-            )}
-            whileTap={{ scale: 0.9 }}
-          >
-            <ListMusic size={24} />
-          </motion.button>
+          <div className="flex items-center gap-1">
+            <QueueView
+              trigger={
+                <motion.button 
+                  className={cn(
+                    "p-2 rounded-full transition-colors",
+                    "hover:bg-muted/50 text-muted-foreground"
+                  )}
+                  whileTap={{ scale: 0.9 }}
+                >
+                  <List size={22} />
+                </motion.button>
+              }
+            />
+            <DeviceConnectButton />
+            <motion.button 
+              onClick={() => setShowLyrics(!showLyrics)} 
+              className={cn(
+                "p-2 rounded-full transition-colors",
+                showLyrics ? "bg-primary/20 text-primary" : "hover:bg-muted/50 text-muted-foreground"
+              )}
+              whileTap={{ scale: 0.9 }}
+            >
+              <ListMusic size={22} />
+            </motion.button>
+          </div>
         </div>
 
         {/* Main content area */}
