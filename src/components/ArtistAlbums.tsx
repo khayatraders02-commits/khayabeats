@@ -6,13 +6,21 @@ import { usePlayer } from '@/contexts/PlayerContext';
 import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
+// Import real concert photos from Pexels
+import concert1 from '@/assets/artists/concert-1.jpg';
+import concert2 from '@/assets/artists/concert-2.jpg';
+import concert3 from '@/assets/artists/concert-3.jpg';
+import concert4 from '@/assets/artists/concert-4.jpg';
+import concert5 from '@/assets/artists/concert-5.jpg';
+import concert6 from '@/assets/artists/concert-6.jpg';
+
 // Popular artist data with their most popular songs
-// Using reliable image URLs
+// Using real concert photos from Pexels (royalty-free)
 const FEATURED_ARTISTS = [
   {
     id: 'drake',
     name: 'Drake',
-    image: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&h=400&fit=crop',
+    image: concert1,
     gradient: 'from-amber-600 to-orange-800',
     topSongs: [
       'God\'s Plan',
@@ -30,7 +38,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'weeknd',
     name: 'The Weeknd',
-    image: 'https://images.unsplash.com/photo-1619983081563-430f63602796?w=400&h=400&fit=crop',
+    image: concert2,
     gradient: 'from-red-600 to-rose-900',
     topSongs: [
       'Blinding Lights',
@@ -48,7 +56,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'taylor',
     name: 'Taylor Swift',
-    image: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=400&h=400&fit=crop',
+    image: concert3,
     gradient: 'from-purple-500 to-pink-600',
     topSongs: [
       'Anti-Hero',
@@ -66,7 +74,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'kendrick',
     name: 'Kendrick Lamar',
-    image: 'https://images.unsplash.com/photo-1571609860754-01a54f59524e?w=400&h=400&fit=crop',
+    image: concert4,
     gradient: 'from-slate-700 to-slate-900',
     topSongs: [
       'HUMBLE.',
@@ -84,7 +92,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'doja',
     name: 'Doja Cat',
-    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop',
+    image: concert5,
     gradient: 'from-pink-500 to-fuchsia-700',
     topSongs: [
       'Say So',
@@ -102,7 +110,7 @@ const FEATURED_ARTISTS = [
   {
     id: 'travis',
     name: 'Travis Scott',
-    image: 'https://images.unsplash.com/photo-1598387993441-a364f854c3e1?w=400&h=400&fit=crop',
+    image: concert6,
     gradient: 'from-orange-700 to-amber-900',
     topSongs: [
       'SICKO MODE',
