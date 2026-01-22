@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
   Settings, ChevronRight, User, Bell, Shield, FileText, 
-  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone, RefreshCw
+  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone, RefreshCw, Clock, Disc3
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { useOnboarding } from '@/components/Onboarding';
+import { useAudioQuality, AUDIO_QUALITY_OPTIONS } from '@/hooks/useAudioQuality';
+import { SleepTimerSheet } from '@/components/SleepTimerSheet';
+import { AudioQualitySheet } from '@/components/AudioQualitySheet';
 
 export const SettingsPage = () => {
   const { user, signOut } = useAuth();
@@ -25,6 +28,9 @@ export const SettingsPage = () => {
   const [saving, setSaving] = useState(false);
   const { isEnabled: notificationsEnabled, requestPermission, isSupported } = usePushNotifications();
   const { resetOnboarding } = useOnboarding();
+  const { quality, qualityInfo } = useAudioQuality();
+  const [showSleepTimer, setShowSleepTimer] = useState(false);
+  const [showAudioQuality, setShowAudioQuality] = useState(false);
 
   const handleSaveProfile = async () => {
     if (!user) return;
@@ -53,6 +59,29 @@ export const SettingsPage = () => {
       navigate('/auth');
     } catch (error) {
       toast.error('Failed to sign out');
+    }
+  };
+
+  const handleClearCache = async () => {
+    try {
+      // Clear localStorage cache
+      const keysToKeep = ['khayabeats_audio_quality', 'khayabeats_onboarding_complete'];
+      const allKeys = Object.keys(localStorage);
+      allKeys.forEach(key => {
+        if (!keysToKeep.includes(key) && key.startsWith('khayabeats')) {
+          localStorage.removeItem(key);
+        }
+      });
+      
+      // Clear any IndexedDB offline storage
+      if ('caches' in window) {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map(name => caches.delete(name)));
+      }
+      
+      toast.success('Cache cleared successfully!');
+    } catch (error) {
+      toast.error('Failed to clear cache');
     }
   };
 
@@ -180,6 +209,26 @@ export const SettingsPage = () => {
           </div>
         </div>
 
+        {/* Playback */}
+        <div>
+          <h3 className="text-sm font-medium text-muted-foreground mb-2 px-4">Playback</h3>
+          <div className="kb-glass rounded-2xl overflow-hidden">
+            <SettingItem 
+              icon={Disc3} 
+              title="Audio Quality" 
+              subtitle={`${qualityInfo.label} (${qualityInfo.bitrate})`}
+              onClick={() => setShowAudioQuality(true)}
+            />
+            <Separator className="mx-4" />
+            <SettingItem 
+              icon={Clock} 
+              title="Sleep Timer" 
+              subtitle="Auto-pause music after a set time"
+              onClick={() => setShowSleepTimer(true)}
+            />
+          </div>
+        </div>
+
         {/* Preferences */}
         <div>
           <h3 className="text-sm font-medium text-muted-foreground mb-2 px-4">Preferences</h3>
@@ -202,6 +251,16 @@ export const SettingsPage = () => {
               title="Language" 
               subtitle="English"
             />
+            <Separator className="mx-4" />
+            <SettingItem 
+              icon={RefreshCw} 
+              title="Reset Onboarding" 
+              subtitle="Show tutorial again"
+              onClick={() => {
+                resetOnboarding();
+                toast.success('Onboarding reset! Refresh to see it again.');
+              }}
+            />
           </div>
         </div>
 
@@ -213,6 +272,7 @@ export const SettingsPage = () => {
               icon={Trash2} 
               title="Clear Cache" 
               subtitle="Free up storage space"
+              onClick={handleClearCache}
             />
           </div>
         </div>
@@ -263,6 +323,10 @@ export const SettingsPage = () => {
           <p className="text-xs text-muted-foreground/50">Made with ❤️</p>
         </div>
       </div>
+
+      {/* Sheets */}
+      <SleepTimerSheet open={showSleepTimer} onOpenChange={setShowSleepTimer} />
+      <AudioQualitySheet open={showAudioQuality} onOpenChange={setShowAudioQuality} />
     </motion.div>
   );
 };

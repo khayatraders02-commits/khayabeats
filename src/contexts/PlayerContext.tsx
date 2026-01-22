@@ -33,8 +33,19 @@ interface PlayerProviderProps {
   children: ReactNode;
 }
 
+// Singleton audio element to prevent multiple instances
+let globalAudioElement: HTMLAudioElement | null = null;
+
+const getOrCreateAudioElement = (): HTMLAudioElement => {
+  if (!globalAudioElement) {
+    globalAudioElement = new Audio();
+  }
+  return globalAudioElement;
+};
+
 export const PlayerProvider = ({ children }: PlayerProviderProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const loadingRef = useRef(false); // Prevent race conditions
   const [isLoading, setIsLoading] = useState(false);
   const [state, setState] = useState<PlayerState>({
     currentTrack: null,
@@ -48,15 +59,22 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     repeat: 'off',
   });
 
-  // Initialize audio element
+  // Initialize audio element - use singleton to prevent multiple audio instances
   useEffect(() => {
-    audioRef.current = new Audio();
+    // Stop any existing audio first to prevent overlapping
+    if (globalAudioElement) {
+      globalAudioElement.pause();
+      globalAudioElement.src = '';
+    }
+    
+    audioRef.current = getOrCreateAudioElement();
     audioRef.current.volume = state.volume;
     
     return () => {
+      // Don't destroy the singleton, just pause it
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current = null;
+        audioRef.current.src = '';
       }
     };
   }, []);
@@ -65,7 +83,20 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
   const loadAndPlayTrack = useCallback(async (track: Track) => {
     if (!audioRef.current) return;
     
+    // Prevent race conditions - if already loading, skip
+    if (loadingRef.current) {
+      console.log('Already loading a track, skipping...');
+      return;
+    }
+    
+    loadingRef.current = true;
     setIsLoading(true);
+    
+    // CRITICAL: Stop any currently playing audio FIRST to prevent overlapping
+    const audio = audioRef.current;
+    audio.pause();
+    audio.src = '';
+    audio.load(); // Reset the audio element
     
     try {
       console.log('Fetching audio stream for:', track.title);
@@ -153,6 +184,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
       setState(prev => ({ ...prev, isPlaying: false }));
     } finally {
       setIsLoading(false);
+      loadingRef.current = false;
     }
   }, []);
 

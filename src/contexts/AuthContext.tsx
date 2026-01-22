@@ -34,17 +34,35 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        console.log('Auth state changed:', event);
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
       }
     );
 
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // THEN check for existing session - this is critical for session persistence
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error('Error getting session:', error);
+      }
+      console.log('Got existing session:', session ? 'yes' : 'no');
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+    });
+
+    // Also try to refresh the session if it exists but might be stale
+    supabase.auth.refreshSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.log('Session refresh not needed or failed:', error.message);
+        return;
+      }
+      if (session) {
+        console.log('Session refreshed successfully');
+        setSession(session);
+        setUser(session.user);
+      }
     });
 
     return () => subscription.unsubscribe();
