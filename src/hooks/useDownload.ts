@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Track } from '@/types/music';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -20,18 +20,26 @@ export const useDownload = () => {
   const [downloading, setDownloading] = useState<DownloadProgress>({});
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
   const [storageUsed, setStorageUsed] = useState(0);
+  const loadedRef = useRef(false);
 
   // Load downloaded tracks on mount
   useEffect(() => {
-    loadDownloadedTracks();
+    if (!loadedRef.current) {
+      loadedRef.current = true;
+      loadDownloadedTracks();
+    }
   }, []);
 
-  const loadDownloadedTracks = async () => {
-    const tracks = await getAllDownloadedTracks();
-    setDownloadedTracks(tracks);
-    const storage = await getStorageUsage();
-    setStorageUsed(storage.used);
-  };
+  const loadDownloadedTracks = useCallback(async () => {
+    try {
+      const tracks = await getAllDownloadedTracks();
+      setDownloadedTracks(tracks);
+      const storage = await getStorageUsage();
+      setStorageUsed(storage.used);
+    } catch (e) {
+      console.error('Failed to load downloads:', e);
+    }
+  }, []);
 
   const checkIsDownloaded = useCallback(async (videoId: string): Promise<boolean> => {
     return isTrackDownloaded(videoId);
@@ -50,15 +58,22 @@ export const useDownload = () => {
       return true;
     }
 
+    // Check if already downloading
+    if (downloading[track.videoId] !== undefined) {
+      toast.info('Download already in progress');
+      return false;
+    }
+
     try {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
+      toast.info(`Downloading "${track.title}"...`);
 
       // Get audio URL from edge function
       const { data, error } = await supabase.functions.invoke('get-audio-stream', {
         body: { videoId: track.videoId },
       });
 
-      if (error || !data.success || !data.audioUrl) {
+      if (error || !data?.success || !data?.audioUrl) {
         throw new Error(data?.error || 'Could not get audio stream');
       }
 
@@ -73,17 +88,17 @@ export const useDownload = () => {
 
       if (success) {
         // Save to database for sync across devices
-        await supabase.from('downloads').insert({
+        await supabase.from('downloads').upsert({
           user_id: user.id,
           video_id: track.videoId,
           title: track.title,
           artist: track.artist,
           thumbnail_url: track.thumbnailUrl,
           duration: track.duration,
-        });
+        }, { onConflict: 'user_id,video_id' });
 
         await loadDownloadedTracks();
-        toast.success('Downloaded for offline listening');
+        toast.success(`"${track.title}" downloaded!`);
         return true;
       } else {
         throw new Error('Failed to save to device');
@@ -99,7 +114,7 @@ export const useDownload = () => {
         return next;
       });
     }
-  }, [user]);
+  }, [user, downloading, loadDownloadedTracks]);
 
   const removeDownload = useCallback(async (videoId: string): Promise<boolean> => {
     try {
@@ -121,7 +136,7 @@ export const useDownload = () => {
       toast.error('Failed to remove download');
       return false;
     }
-  }, [user]);
+  }, [user, loadDownloadedTracks]);
 
   const getDownloadProgress = useCallback((videoId: string): number | null => {
     return downloading[videoId] ?? null;

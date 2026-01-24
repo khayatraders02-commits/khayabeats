@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useRef, useEffect, Re
 import { Track, PlayerState } from '@/types/music';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getDownloadedTrack } from '@/lib/offlineStorage';
 
 interface PlayerContextType extends PlayerState {
   play: (track?: Track, queue?: Track[]) => void;
@@ -33,19 +34,33 @@ interface PlayerProviderProps {
   children: ReactNode;
 }
 
-// Singleton audio element to prevent multiple instances
-let globalAudioElement: HTMLAudioElement | null = null;
+// SINGLETON: Only ONE audio element ever exists to prevent overlapping
+let singletonAudio: HTMLAudioElement | null = null;
+let singletonInitialized = false;
 
-const getOrCreateAudioElement = (): HTMLAudioElement => {
-  if (!globalAudioElement) {
-    globalAudioElement = new Audio();
+const getSingletonAudio = (): HTMLAudioElement => {
+  if (!singletonAudio) {
+    singletonAudio = new Audio();
+    singletonAudio.preload = 'auto';
+    singletonInitialized = true;
   }
-  return globalAudioElement;
+  return singletonAudio;
+};
+
+// Completely stop any audio playback
+const stopAudio = () => {
+  if (singletonAudio) {
+    singletonAudio.pause();
+    singletonAudio.currentTime = 0;
+    singletonAudio.src = '';
+    singletonAudio.load();
+  }
 };
 
 export const PlayerProvider = ({ children }: PlayerProviderProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const loadingRef = useRef(false); // Prevent race conditions
+  const loadingRef = useRef(false);
+  const currentVideoIdRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [state, setState] = useState<PlayerState>({
     currentTrack: null,
@@ -59,134 +74,138 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     repeat: 'off',
   });
 
-  // Initialize audio element - use singleton to prevent multiple audio instances
+  // Initialize singleton audio
   useEffect(() => {
-    // Stop any existing audio first to prevent overlapping
-    if (globalAudioElement) {
-      globalAudioElement.pause();
-      globalAudioElement.src = '';
-    }
-    
-    audioRef.current = getOrCreateAudioElement();
+    // Stop any existing audio first
+    stopAudio();
+    audioRef.current = getSingletonAudio();
     audioRef.current.volume = state.volume;
     
     return () => {
-      // Don't destroy the singleton, just pause it
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-      }
+      // Cleanup on unmount
+      stopAudio();
     };
   }, []);
 
-  // Fetch audio stream and play
+  // Save track to recently played
+  const saveToRecentlyPlayed = useCallback(async (track: Track) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from('recently_played').upsert({
+          user_id: user.id,
+          video_id: track.videoId,
+          title: track.title,
+          artist: track.artist,
+          thumbnail_url: track.thumbnailUrl,
+          duration: track.duration,
+          played_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,video_id' });
+      }
+    } catch (e) {
+      console.log('Failed to save recently played');
+    }
+  }, []);
+
+  // Core function to load and play a track
   const loadAndPlayTrack = useCallback(async (track: Track) => {
-    if (!audioRef.current) return;
+    const audio = audioRef.current;
+    if (!audio) return;
     
-    // Prevent race conditions - if already loading, skip
+    // Prevent concurrent loads
     if (loadingRef.current) {
-      console.log('Already loading a track, skipping...');
+      console.log('Already loading, skipping...');
+      return;
+    }
+    
+    // If same track, just play/resume
+    if (currentVideoIdRef.current === track.videoId && audio.src) {
+      audio.play().catch(console.error);
+      setState(prev => ({ ...prev, isPlaying: true }));
       return;
     }
     
     loadingRef.current = true;
+    currentVideoIdRef.current = track.videoId;
     setIsLoading(true);
     
-    // CRITICAL: Stop any currently playing audio FIRST to prevent overlapping
-    const audio = audioRef.current;
+    // CRITICAL: Stop current audio completely before loading new
     audio.pause();
+    audio.currentTime = 0;
     audio.src = '';
-    audio.load(); // Reset the audio element
     
     try {
-      console.log('Fetching audio stream for:', track.title);
+      console.log('Loading track:', track.title);
       
-      const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-        body: { videoId: track.videoId },
-      });
-
-      if (error) throw error;
+      // Check if track is downloaded offline first
+      const offline = await getDownloadedTrack(track.videoId);
+      let audioSource: string;
       
-      if (!data.success || !data.audioUrl) {
-        throw new Error(data.error || 'Could not get audio stream');
-      }
-
-      console.log('Got audio URL, loading...', data.mimeType);
-      
-      const audio = audioRef.current;
-      
-      // Try the proxied URL first, fallback to direct if needed
-      const tryPlayAudio = async (url: string): Promise<boolean> => {
-        return new Promise((resolve) => {
-          audio.src = url;
-          
-          const handleCanPlay = () => {
-            cleanup();
-            resolve(true);
-          };
-          
-          const handleError = () => {
-            cleanup();
-            resolve(false);
-          };
-          
-          const cleanup = () => {
-            audio.removeEventListener('canplaythrough', handleCanPlay);
-            audio.removeEventListener('error', handleError);
-          };
-          
-          audio.addEventListener('canplaythrough', handleCanPlay, { once: true });
-          audio.addEventListener('error', handleError, { once: true });
-          
-          audio.load();
-          
-          // Timeout after 8 seconds
-          setTimeout(() => {
-            cleanup();
-            resolve(false);
-          }, 8000);
+      if (offline) {
+        console.log('Playing from offline storage');
+        audioSource = URL.createObjectURL(offline.blob);
+      } else {
+        // Fetch from API
+        const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+          body: { videoId: track.videoId },
         });
-      };
-      
-      // Try proxied URL first
-      let canPlay = await tryPlayAudio(data.audioUrl);
-      
-      // If proxy fails and we have a direct URL, try that
-      if (!canPlay && data.directUrl) {
-        console.log('Proxy failed, trying direct URL...');
-        canPlay = await tryPlayAudio(data.directUrl);
-      }
-      
-      if (!canPlay) {
-        throw new Error('Could not load audio from any source');
-      }
-      
-      await audio.play();
-      setState(prev => ({ ...prev, isPlaying: true }));
-      
-      // Save to recently played (fire and forget)
-      supabase.auth.getUser().then(({ data: { user } }) => {
-        if (user) {
-          supabase.from('recently_played').insert({
-            user_id: user.id,
-            video_id: track.videoId,
-            title: track.title,
-            artist: track.artist,
-            thumbnail_url: track.thumbnailUrl,
-            duration: track.duration,
-          }).then(() => {});
+
+        if (error || !data?.success || !data?.audioUrl) {
+          throw new Error(data?.error || 'Could not get audio stream');
         }
+        
+        audioSource = data.audioUrl;
+      }
+
+      // Double check we're still loading the same track
+      if (currentVideoIdRef.current !== track.videoId) {
+        console.log('Track changed during load, aborting');
+        return;
+      }
+      
+      // Set up audio
+      audio.src = audioSource;
+      
+      // Wait for audio to be ready
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Load timeout')), 15000);
+        
+        const onCanPlay = () => {
+          clearTimeout(timeout);
+          audio.removeEventListener('canplaythrough', onCanPlay);
+          audio.removeEventListener('error', onError);
+          resolve();
+        };
+        
+        const onError = () => {
+          clearTimeout(timeout);
+          audio.removeEventListener('canplaythrough', onCanPlay);
+          audio.removeEventListener('error', onError);
+          reject(new Error('Audio load error'));
+        };
+        
+        audio.addEventListener('canplaythrough', onCanPlay, { once: true });
+        audio.addEventListener('error', onError, { once: true });
+        audio.load();
       });
+      
+      // Play
+      await audio.play();
+      setState(prev => ({ ...prev, isPlaying: true, progress: 0 }));
+      
+      // Save to recently played (non-blocking)
+      saveToRecentlyPlayed(track);
       
     } catch (error) {
       console.error('Error loading track:', error);
-      toast.error('Failed to play track. Try another one.');
+      toast.error('Could not play this track');
       setState(prev => ({ ...prev, isPlaying: false }));
+      currentVideoIdRef.current = null;
     } finally {
       setIsLoading(false);
       loadingRef.current = false;
     }
-  }, []);
+  }, [saveToRecentlyPlayed]);
 
   const play = useCallback((track?: Track, queue?: Track[]) => {
     if (track) {
@@ -202,7 +221,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
       
       loadAndPlayTrack(track);
     } else if (audioRef.current && state.currentTrack) {
-      audioRef.current.play();
+      audioRef.current.play().catch(console.error);
       setState(prev => ({ ...prev, isPlaying: true }));
     }
   }, [loadAndPlayTrack, state.currentTrack]);
@@ -218,73 +237,70 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     if (state.isPlaying) {
       pause();
     } else if (audioRef.current && state.currentTrack) {
-      audioRef.current.play();
+      audioRef.current.play().catch(console.error);
       setState(prev => ({ ...prev, isPlaying: true }));
     }
   }, [state.isPlaying, state.currentTrack, pause]);
 
   const next = useCallback(() => {
-    setState(prev => {
-      if (prev.queue.length === 0) return prev;
-      
-      let nextIndex = prev.queueIndex + 1;
-      
-      if (prev.shuffle) {
-        nextIndex = Math.floor(Math.random() * prev.queue.length);
-      } else if (nextIndex >= prev.queue.length) {
-        if (prev.repeat === 'all') {
-          nextIndex = 0;
-        } else {
-          return { ...prev, isPlaying: false };
-        }
+    const currentState = state;
+    if (currentState.queue.length === 0) return;
+    
+    let nextIndex = currentState.queueIndex + 1;
+    
+    if (currentState.shuffle) {
+      nextIndex = Math.floor(Math.random() * currentState.queue.length);
+    } else if (nextIndex >= currentState.queue.length) {
+      if (currentState.repeat === 'all') {
+        nextIndex = 0;
+      } else {
+        pause();
+        return;
       }
-      
-      const nextTrack = prev.queue[nextIndex];
-      loadAndPlayTrack(nextTrack);
-      
-      return {
+    }
+    
+    const nextTrack = currentState.queue[nextIndex];
+    if (nextTrack) {
+      setState(prev => ({
         ...prev,
         queueIndex: nextIndex,
         currentTrack: nextTrack,
         progress: 0,
-      };
-    });
-  }, [loadAndPlayTrack]);
+      }));
+      loadAndPlayTrack(nextTrack);
+    }
+  }, [state, loadAndPlayTrack, pause]);
 
   const previous = useCallback(() => {
+    // If more than 3 seconds in, restart current track
     if (audioRef.current && state.progress > 3) {
       audioRef.current.currentTime = 0;
       setState(prev => ({ ...prev, progress: 0 }));
       return;
     }
     
-    setState(prev => {
-      const prevIndex = prev.queueIndex - 1;
-      if (prevIndex < 0) {
-        if (prev.repeat === 'all') {
-          const lastTrack = prev.queue[prev.queue.length - 1];
-          loadAndPlayTrack(lastTrack);
-          return {
-            ...prev,
-            queueIndex: prev.queue.length - 1,
-            currentTrack: lastTrack,
-            progress: 0,
-          };
-        }
-        return prev;
+    const currentState = state;
+    let prevIndex = currentState.queueIndex - 1;
+    
+    if (prevIndex < 0) {
+      if (currentState.repeat === 'all') {
+        prevIndex = currentState.queue.length - 1;
+      } else {
+        return;
       }
-      
-      const prevTrack = prev.queue[prevIndex];
-      loadAndPlayTrack(prevTrack);
-      
-      return {
+    }
+    
+    const prevTrack = currentState.queue[prevIndex];
+    if (prevTrack) {
+      setState(prev => ({
         ...prev,
         queueIndex: prevIndex,
         currentTrack: prevTrack,
         progress: 0,
-      };
-    });
-  }, [state.progress, loadAndPlayTrack]);
+      }));
+      loadAndPlayTrack(prevTrack);
+    }
+  }, [state, loadAndPlayTrack]);
 
   const seek = useCallback((time: number) => {
     if (audioRef.current) {
@@ -332,7 +348,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     }));
   }, []);
 
-  // Handle audio events
+  // Audio event handlers
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -348,27 +364,42 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
     const handleEnded = () => {
       if (state.repeat === 'one') {
         audio.currentTime = 0;
-        audio.play();
+        audio.play().catch(console.error);
       } else {
         next();
       }
     };
 
+    const handlePlay = () => {
+      setState(prev => ({ ...prev, isPlaying: true }));
+    };
+
+    const handlePause = () => {
+      setState(prev => ({ ...prev, isPlaying: false }));
+    };
+
+    // Don't auto-skip on error - let user decide
     const handleError = (e: Event) => {
       console.error('Audio error:', e);
-      toast.error('Audio playback error. Trying next track...');
-      next();
+      // Only show error if we were trying to play something
+      if (currentVideoIdRef.current) {
+        toast.error('Audio playback error');
+      }
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('durationchange', handleDurationChange);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
     audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('durationchange', handleDurationChange);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('error', handleError);
     };
   }, [next, state.repeat]);
