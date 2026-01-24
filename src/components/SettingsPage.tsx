@@ -188,11 +188,43 @@ export const SettingsPage = () => {
         <div>
           <h3 className="text-sm font-medium text-muted-foreground mb-2 px-4">Account</h3>
           <div className="kb-glass rounded-2xl overflow-hidden">
-            <SettingItem 
-              icon={User} 
-              title="Edit Profile" 
-              subtitle="Name, photo, and more"
-            />
+            <Dialog>
+              <DialogTrigger asChild>
+                <div>
+                  <SettingItem 
+                    icon={User} 
+                    title="Edit Profile" 
+                    subtitle="Name, photo, and more"
+                  />
+                </div>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Edit Profile</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="displayNameEdit">Display Name</Label>
+                    <Input
+                      id="displayNameEdit"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      placeholder="Enter your name"
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Email: {user.email}
+                  </p>
+                  <Button 
+                    onClick={handleSaveProfile} 
+                    disabled={saving}
+                    className="w-full kb-gradient-bg"
+                  >
+                    {saving ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Separator className="mx-4" />
             <SettingItem 
               icon={Bell} 
