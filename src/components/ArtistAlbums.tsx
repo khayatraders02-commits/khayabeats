@@ -6,25 +6,16 @@ import { usePlayer } from '@/contexts/PlayerContext';
 import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
-// Import real concert photos from Pexels
-import concert1 from '@/assets/artists/concert-1.jpg';
-import concert2 from '@/assets/artists/concert-2.jpg';
-import concert3 from '@/assets/artists/concert-3.jpg';
-import concert4 from '@/assets/artists/concert-4.jpg';
-import concert5 from '@/assets/artists/concert-5.jpg';
-import concert6 from '@/assets/artists/concert-6.jpg';
-
-// Popular artist data with their most popular songs
-// Using real concert photos from Pexels (royalty-free)
+// Popular artist data with real YouTube thumbnails will be fetched dynamically
+// We use reliable gradient backgrounds with artist initials as fallback
 const FEATURED_ARTISTS = [
   {
     id: 'drake',
     name: 'Drake',
-    image: concert1,
     gradient: 'from-amber-600 to-orange-800',
     topSongs: [
       'God\'s Plan',
-      'One Dance',
+      'One Dance', 
       'Hotline Bling',
       'In My Feelings',
       'Started From The Bottom',
@@ -38,7 +29,6 @@ const FEATURED_ARTISTS = [
   {
     id: 'weeknd',
     name: 'The Weeknd',
-    image: concert2,
     gradient: 'from-red-600 to-rose-900',
     topSongs: [
       'Blinding Lights',
@@ -54,10 +44,60 @@ const FEATURED_ARTISTS = [
     ]
   },
   {
+    id: 'beyonce',
+    name: 'Beyoncé',
+    gradient: 'from-yellow-500 to-amber-700',
+    topSongs: [
+      'Crazy In Love',
+      'Single Ladies',
+      'Halo',
+      'Formation',
+      'Love On Top',
+      'Drunk In Love',
+      'Run The World',
+      'Irreplaceable',
+      'Cuff It',
+      'Break My Soul'
+    ]
+  },
+  {
+    id: 'sza',
+    name: 'SZA',
+    gradient: 'from-emerald-500 to-teal-700',
+    topSongs: [
+      'Kill Bill',
+      'Good Days',
+      'Kiss Me More',
+      'The Weekend',
+      'Love Galore',
+      'Shirt',
+      'Snooze',
+      'I Hate U',
+      'All The Stars',
+      'Drew Barrymore'
+    ]
+  },
+  {
+    id: 'summer',
+    name: 'Summer Walker',
+    gradient: 'from-purple-500 to-violet-700',
+    topSongs: [
+      'Playing Games',
+      'Girls Need Love',
+      'Body',
+      'No Love',
+      'Ex For A Reason',
+      'Come Thru',
+      'Over It',
+      'Session 32',
+      'Reciprocate',
+      'Just Might'
+    ]
+  },
+  {
     id: 'taylor',
     name: 'Taylor Swift',
-    image: concert3,
-    gradient: 'from-purple-500 to-pink-600',
+    gradient: 'from-pink-500 to-rose-600',
     topSongs: [
       'Anti-Hero',
       'Shake It Off',
@@ -74,7 +114,6 @@ const FEATURED_ARTISTS = [
   {
     id: 'kendrick',
     name: 'Kendrick Lamar',
-    image: concert4,
     gradient: 'from-slate-700 to-slate-900',
     topSongs: [
       'HUMBLE.',
@@ -92,7 +131,6 @@ const FEATURED_ARTISTS = [
   {
     id: 'doja',
     name: 'Doja Cat',
-    image: concert5,
     gradient: 'from-pink-500 to-fuchsia-700',
     topSongs: [
       'Say So',
@@ -110,7 +148,6 @@ const FEATURED_ARTISTS = [
   {
     id: 'travis',
     name: 'Travis Scott',
-    image: concert6,
     gradient: 'from-orange-700 to-amber-900',
     topSongs: [
       'SICKO MODE',
@@ -123,6 +160,57 @@ const FEATURED_ARTISTS = [
       'Stargazing',
       'The Scotts',
       'Out West'
+    ]
+  },
+  {
+    id: 'rihanna',
+    name: 'Rihanna',
+    gradient: 'from-red-500 to-pink-600',
+    topSongs: [
+      'Umbrella',
+      'Diamonds',
+      'We Found Love',
+      'Work',
+      'Stay',
+      'Rude Boy',
+      'Only Girl',
+      'Love On The Brain',
+      'Needed Me',
+      'Wild Thoughts'
+    ]
+  },
+  {
+    id: 'chrisbrown',
+    name: 'Chris Brown',
+    gradient: 'from-blue-600 to-indigo-800',
+    topSongs: [
+      'No Guidance',
+      'Under The Influence',
+      'Go Crazy',
+      'Loyal',
+      'With You',
+      'Forever',
+      'Look At Me Now',
+      'Ayo',
+      'Run It',
+      'Yeah 3x'
+    ]
+  },
+  {
+    id: 'usher',
+    name: 'Usher',
+    gradient: 'from-gray-700 to-gray-900',
+    topSongs: [
+      'Yeah!',
+      'My Boo',
+      'Confessions',
+      'U Got It Bad',
+      'Nice & Slow',
+      'Burn',
+      'OMG',
+      'DJ Got Us Fallin In Love',
+      'Love In This Club',
+      'Climax'
     ]
   }
 ];
@@ -140,24 +228,22 @@ export const ArtistAlbumCard = ({ artist, onPlay }: ArtistAlbumCardProps) => {
       whileHover={{ scale: 1.02, y: -4 }}
       whileTap={{ scale: 0.98 }}
       className="group relative overflow-hidden rounded-2xl cursor-pointer"
-      onClick={() => onPlay(`${artist.name} best songs`)}
+      onClick={() => onPlay(`${artist.topSongs[0]} ${artist.name}`)}
     >
-      {/* Background */}
+      {/* Gradient Background */}
       <div className={cn("absolute inset-0 bg-gradient-to-br", artist.gradient)} />
       
-      {/* Artist Image */}
-      <div className="relative aspect-[3/4] overflow-hidden">
-        <img 
-          src={artist.image} 
-          alt={artist.name}
-          className="w-full h-full object-cover object-center transition-transform duration-500 group-hover:scale-110"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
+      {/* Artist Initial/Image */}
+      <div className="relative aspect-[3/4] overflow-hidden flex items-center justify-center">
+        <span className="text-7xl font-black text-white/30">
+          {artist.name.charAt(0)}
+        </span>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
         
         {/* Content */}
         <div className="absolute bottom-0 left-0 right-0 p-4">
           <h3 className="font-bold text-lg text-white mb-1">{artist.name}</h3>
-          <p className="text-xs text-white/70 mb-3">Top Hits Collection</p>
+          <p className="text-xs text-white/70 mb-3">Top Hits</p>
           
           {/* Play Button */}
           <motion.button
@@ -184,8 +270,8 @@ export const ArtistRow = ({ artist, onPlay, onSeeAll }: ArtistRowProps) => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden shadow-lg">
-            <img src={artist.image} alt={artist.name} className="w-full h-full object-cover" />
+          <div className={cn("w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br", artist.gradient)}>
+            <span className="text-lg font-bold text-white">{artist.name.charAt(0)}</span>
           </div>
           <div>
             <h3 className="font-bold">{artist.name}</h3>
@@ -201,7 +287,7 @@ export const ArtistRow = ({ artist, onPlay, onSeeAll }: ArtistRowProps) => {
         </motion.button>
       </div>
 
-      {/* Songs */}
+      {/* Songs - Each plays individual song, not playlist */}
       <div className="space-y-1">
         {artist.topSongs.slice(0, 4).map((song, i) => (
           <motion.div
@@ -212,7 +298,7 @@ export const ArtistRow = ({ artist, onPlay, onSeeAll }: ArtistRowProps) => {
             whileHover={{ backgroundColor: 'hsl(var(--muted) / 0.5)' }}
             whileTap={{ scale: 0.99 }}
             className="group flex items-center gap-3 p-2 rounded-lg cursor-pointer"
-            onClick={() => onPlay(`${artist.name} ${song}`)}
+            onClick={() => onPlay(`${artist.name} ${song} official audio`)}
           >
             <span className="w-5 text-center text-xs text-muted-foreground group-hover:hidden">
               {i + 1}
@@ -253,7 +339,7 @@ export const FeaturedArtists = ({ onSearchAndPlay }: FeaturedArtistsProps) => {
               key={artist.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
+              transition={{ delay: i * 0.05 }}
               className="w-36 flex-shrink-0"
             >
               <ArtistAlbumCard artist={artist} onPlay={onSearchAndPlay} />
@@ -269,12 +355,11 @@ export const FeaturedArtists = ({ onSearchAndPlay }: FeaturedArtistsProps) => {
 // Artist circle for horizontal scroll
 interface ArtistCircleProps {
   name: string;
-  image: string;
   gradient?: string;
   onClick?: () => void;
 }
 
-export const ArtistCircle = ({ name, image, gradient, onClick }: ArtistCircleProps) => (
+export const ArtistCircle = ({ name, gradient, onClick }: ArtistCircleProps) => (
   <motion.button
     whileHover={{ scale: 1.05, y: -4 }}
     whileTap={{ scale: 0.95 }}
@@ -287,14 +372,8 @@ export const ArtistCircle = ({ name, image, gradient, onClick }: ArtistCirclePro
         animate={{ opacity: [0.3, 0.6, 0.3] }}
         transition={{ duration: 2, repeat: Infinity }}
       />
-      <div className="relative w-16 h-16 rounded-full overflow-hidden shadow-xl ring-2 ring-border">
-        {image ? (
-          <img src={image} alt={name} className="w-full h-full object-cover" />
-        ) : (
-          <div className={cn("w-full h-full flex items-center justify-center bg-gradient-to-br", gradient || "from-primary to-accent")}>
-            <span className="text-xl font-bold text-white">{name.charAt(0)}</span>
-          </div>
-        )}
+      <div className={cn("relative w-16 h-16 rounded-full flex items-center justify-center shadow-xl ring-2 ring-border bg-gradient-to-br", gradient || "from-primary to-accent")}>
+        <span className="text-xl font-bold text-white">{name.charAt(0)}</span>
       </div>
     </div>
     <span className="text-xs font-medium text-center truncate w-full">{name}</span>
@@ -303,16 +382,15 @@ export const ArtistCircle = ({ name, image, gradient, onClick }: ArtistCirclePro
 
 export const FeaturedArtistCircles = ({ onSearchAndPlay }: FeaturedArtistsProps) => (
   <section className="space-y-4">
-    <h2 className="text-lg font-bold">Favourite Artists</h2>
+    <h2 className="text-lg font-bold">Popular Artists</h2>
     <ScrollArea className="w-full">
       <div className="flex gap-4 pb-4">
         {FEATURED_ARTISTS.map((artist) => (
           <ArtistCircle
             key={artist.id}
             name={artist.name}
-            image={artist.image}
             gradient={artist.gradient}
-            onClick={() => onSearchAndPlay(`${artist.name} best songs`)}
+            onClick={() => onSearchAndPlay(`${artist.topSongs[0]} ${artist.name} official`)}
           />
         ))}
       </div>

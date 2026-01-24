@@ -52,7 +52,6 @@ export const FriendsButton = () => {
   const [pendingRequests, setPendingRequests] = useState<FriendRequest[]>([]);
   const { user } = useAuth();
 
-  // Fetch pending requests count
   useEffect(() => {
     if (!user) return;
 
@@ -70,7 +69,6 @@ export const FriendsButton = () => {
 
     fetchPending();
 
-    // Subscribe to new requests
     const channel = supabase
       .channel('friend-requests')
       .on(
@@ -81,9 +79,7 @@ export const FriendsButton = () => {
           table: 'friend_requests',
           filter: `to_user_id=eq.${user.id}`,
         },
-        () => {
-          fetchPending();
-        }
+        () => fetchPending()
       )
       .subscribe();
 
@@ -128,7 +124,6 @@ const FriendsContent = () => {
   const [loading, setLoading] = useState(false);
   const { user } = useAuth();
 
-  // Fetch friends and requests
   useEffect(() => {
     if (!user) return;
 
@@ -149,7 +144,6 @@ const FriendsContent = () => {
           .select('id, display_name, avatar_url')
           .in('id', friendIds);
 
-        // Get presence for friends
         const { data: presences } = await supabase
           .from('user_presence')
           .select('user_id, current_track_data, is_playing')
@@ -174,7 +168,6 @@ const FriendsContent = () => {
         .eq('status', 'pending');
 
       if (pending) {
-        // Get profiles for requesters
         const fromIds = pending.map(p => p.from_user_id);
         const { data: profiles } = await supabase
           .from('profiles')
@@ -216,7 +209,6 @@ const FriendsContent = () => {
 
     setLoading(true);
     try {
-      // Search by display_name (case insensitive)
       const { data, error } = await supabase
         .from('profiles')
         .select('id, display_name, avatar_url')
@@ -225,7 +217,6 @@ const FriendsContent = () => {
         .limit(10);
 
       if (error) throw error;
-
       setSearchResults(data || []);
     } catch (error) {
       console.error('Search error:', error);
@@ -267,14 +258,12 @@ const FriendsContent = () => {
       if (!request) return;
 
       if (accept) {
-        // Create friendship
         await supabase.from('friendships').insert({
           user1_id: request.from_user_id,
           user2_id: user.id,
         });
       }
 
-      // Update request status
       await supabase
         .from('friend_requests')
         .update({ status: accept ? 'accepted' : 'rejected' })
@@ -283,7 +272,6 @@ const FriendsContent = () => {
       setPendingRequests(prev => prev.filter(r => r.id !== requestId));
       toast.success(accept ? 'Friend added!' : 'Request declined');
 
-      // Refresh friends list if accepted
       if (accept && request.profile) {
         setFriends(prev => [...prev, request.profile as Friend]);
       }
@@ -303,8 +291,8 @@ const FriendsContent = () => {
   }
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full">
-      <TabsList className="w-full grid grid-cols-3 mb-4">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+      <TabsList className="w-full grid grid-cols-3 mb-4 flex-shrink-0">
         <TabsTrigger value="friends">Friends</TabsTrigger>
         <TabsTrigger value="requests" className="relative">
           Requests
@@ -317,182 +305,184 @@ const FriendsContent = () => {
         <TabsTrigger value="add">Add</TabsTrigger>
       </TabsList>
 
-      <ScrollArea className="h-[calc(100%-60px)] pb-8">
-        <TabsContent value="friends" className="mt-0 space-y-2">
-          {friends.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
-              <h3 className="font-semibold mb-1">No friends yet</h3>
-              <p className="text-sm text-muted-foreground">
-                Search for users to add as friends
-              </p>
-            </div>
-          ) : (
-            friends.map((friend) => (
-              <motion.button
-                key={friend.id}
-                onClick={() => setSelectedFriend(friend)}
-                className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50 transition-colors text-left"
-                whileTap={{ scale: 0.98 }}
-              >
-                <div className="relative">
-                  <Avatar>
-                    <AvatarImage src={friend.avatar_url || ''} />
-                    <AvatarFallback className="kb-gradient-bg text-white">
-                      {friend.display_name?.charAt(0) || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  {friend.presence?.is_playing && (
-                    <Circle className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 fill-green-500 text-green-500" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{friend.display_name || 'User'}</p>
-                  {friend.presence?.current_track_data && (
-                    <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
-                      <Music2 size={10} />
-                      {(friend.presence.current_track_data as Track).title}
-                    </p>
-                  )}
-                </div>
-                <MessageCircle size={18} className="text-muted-foreground" />
-              </motion.button>
-            ))
-          )}
-        </TabsContent>
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          <TabsContent value="friends" className="mt-0 space-y-2 pb-8">
+            {friends.length === 0 ? (
+              <div className="text-center py-12">
+                <Users className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
+                <h3 className="font-semibold mb-1">No friends yet</h3>
+                <p className="text-sm text-muted-foreground">
+                  Search for users to add as friends
+                </p>
+              </div>
+            ) : (
+              friends.map((friend) => (
+                <motion.button
+                  key={friend.id}
+                  onClick={() => setSelectedFriend(friend)}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50 transition-colors text-left"
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <div className="relative">
+                    <Avatar>
+                      <AvatarImage src={friend.avatar_url || ''} />
+                      <AvatarFallback className="kb-gradient-bg text-white">
+                        {friend.display_name?.charAt(0) || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    {friend.presence?.is_playing && (
+                      <Circle className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 fill-green-500 text-green-500" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{friend.display_name || 'User'}</p>
+                    {friend.presence?.current_track_data && (
+                      <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                        <Music2 size={10} />
+                        {(friend.presence.current_track_data as Track).title}
+                      </p>
+                    )}
+                  </div>
+                  <MessageCircle size={18} className="text-muted-foreground" />
+                </motion.button>
+              ))
+            )}
+          </TabsContent>
 
-        <TabsContent value="requests" className="mt-0 space-y-4">
-          {pendingRequests.length > 0 && (
-            <div>
-              <h4 className="text-sm font-medium text-muted-foreground mb-2">Pending Requests</h4>
+          <TabsContent value="requests" className="mt-0 space-y-4 pb-8">
+            {pendingRequests.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-muted-foreground mb-2">Pending Requests</h4>
+                <div className="space-y-2">
+                  {pendingRequests.map((request) => (
+                    <div
+                      key={request.id}
+                      className="flex items-center gap-3 p-3 rounded-xl bg-card"
+                    >
+                      <Avatar>
+                        <AvatarImage src={request.profile?.avatar_url || ''} />
+                        <AvatarFallback className="kb-gradient-bg text-white">
+                          {request.profile?.display_name?.charAt(0) || 'U'}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1">
+                        <p className="font-medium">{request.profile?.display_name || 'User'}</p>
+                        <p className="text-xs text-muted-foreground">wants to be friends</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-9 w-9 rounded-full bg-green-500/10 text-green-500 hover:bg-green-500/20"
+                          onClick={() => respondToRequest(request.id, true)}
+                        >
+                          <Check size={18} />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-9 w-9 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20"
+                          onClick={() => respondToRequest(request.id, false)}
+                        >
+                          <X size={18} />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {sentRequests.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-muted-foreground mb-2">Sent Requests</h4>
+                <div className="space-y-2">
+                  {sentRequests.map((request) => (
+                    <div
+                      key={request.id}
+                      className="flex items-center gap-3 p-3 rounded-xl bg-card opacity-60"
+                    >
+                      <Avatar>
+                        <AvatarImage src={request.profile?.avatar_url || ''} />
+                        <AvatarFallback className="kb-gradient-bg text-white">
+                          {request.profile?.display_name?.charAt(0) || 'U'}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1">
+                        <p className="font-medium">{request.profile?.display_name || 'User'}</p>
+                        <p className="text-xs text-muted-foreground">Pending...</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {pendingRequests.length === 0 && sentRequests.length === 0 && (
+              <div className="text-center py-12">
+                <UserPlus className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
+                <h3 className="font-semibold mb-1">No requests</h3>
+                <p className="text-sm text-muted-foreground">
+                  Friend requests will appear here
+                </p>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="add" className="mt-0 space-y-4 pb-8">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Search by username..."
+                value={searchEmail}
+                onChange={(e) => setSearchEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && searchUsers()}
+                className="h-11 rounded-xl"
+              />
+              <Button
+                onClick={searchUsers}
+                disabled={loading || !searchEmail.trim()}
+                className="h-11 px-4"
+              >
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
+              </Button>
+            </div>
+
+            {searchResults.length > 0 ? (
               <div className="space-y-2">
-                {pendingRequests.map((request) => (
+                {searchResults.map((profile) => (
                   <div
-                    key={request.id}
+                    key={profile.id}
                     className="flex items-center gap-3 p-3 rounded-xl bg-card"
                   >
                     <Avatar>
-                      <AvatarImage src={request.profile?.avatar_url || ''} />
+                      <AvatarImage src={profile.avatar_url || ''} />
                       <AvatarFallback className="kb-gradient-bg text-white">
-                        {request.profile?.display_name?.charAt(0) || 'U'}
+                        {profile.display_name?.charAt(0) || 'U'}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
-                      <p className="font-medium">{request.profile?.display_name || 'User'}</p>
-                      <p className="text-xs text-muted-foreground">wants to be friends</p>
+                      <p className="font-medium">{profile.display_name || 'User'}</p>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-9 w-9 rounded-full bg-green-500/10 text-green-500 hover:bg-green-500/20"
-                        onClick={() => respondToRequest(request.id, true)}
-                      >
-                        <Check size={18} />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-9 w-9 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20"
-                        onClick={() => respondToRequest(request.id, false)}
-                      >
-                        <X size={18} />
-                      </Button>
-                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => sendFriendRequest(profile.id)}
+                      className="kb-gradient-bg"
+                    >
+                      <UserPlus size={16} className="mr-1" />
+                      Add
+                    </Button>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {sentRequests.length > 0 && (
-            <div>
-              <h4 className="text-sm font-medium text-muted-foreground mb-2">Sent Requests</h4>
-              <div className="space-y-2">
-                {sentRequests.map((request) => (
-                  <div
-                    key={request.id}
-                    className="flex items-center gap-3 p-3 rounded-xl bg-card opacity-60"
-                  >
-                    <Avatar>
-                      <AvatarImage src={request.profile?.avatar_url || ''} />
-                      <AvatarFallback className="kb-gradient-bg text-white">
-                        {request.profile?.display_name?.charAt(0) || 'U'}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <p className="font-medium">{request.profile?.display_name || 'User'}</p>
-                      <p className="text-xs text-muted-foreground">Pending...</p>
-                    </div>
-                  </div>
-                ))}
+            ) : searchEmail && !loading ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <p>No users found</p>
               </div>
-            </div>
-          )}
-
-          {pendingRequests.length === 0 && sentRequests.length === 0 && (
-            <div className="text-center py-12">
-              <UserPlus className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
-              <h3 className="font-semibold mb-1">No requests</h3>
-              <p className="text-sm text-muted-foreground">
-                Friend requests will appear here
-              </p>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="add" className="mt-0 space-y-4">
-          <div className="flex gap-2">
-            <Input
-              placeholder="Search by username..."
-              value={searchEmail}
-              onChange={(e) => setSearchEmail(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && searchUsers()}
-              className="h-11 rounded-xl"
-            />
-            <Button
-              onClick={searchUsers}
-              disabled={loading || !searchEmail.trim()}
-              className="h-11 px-4"
-            >
-              {loading ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
-            </Button>
-          </div>
-
-          {searchResults.length > 0 ? (
-            <div className="space-y-2">
-              {searchResults.map((profile) => (
-                <div
-                  key={profile.id}
-                  className="flex items-center gap-3 p-3 rounded-xl bg-card"
-                >
-                  <Avatar>
-                    <AvatarImage src={profile.avatar_url || ''} />
-                    <AvatarFallback className="kb-gradient-bg text-white">
-                      {profile.display_name?.charAt(0) || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1">
-                    <p className="font-medium">{profile.display_name || 'User'}</p>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => sendFriendRequest(profile.id)}
-                    className="kb-gradient-bg"
-                  >
-                    <UserPlus size={16} className="mr-1" />
-                    Add
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : searchEmail && !loading ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <p>No users found</p>
-            </div>
-          ) : null}
-        </TabsContent>
-      </ScrollArea>
+            ) : null}
+          </TabsContent>
+        </ScrollArea>
+      </div>
     </Tabs>
   );
 };
@@ -502,12 +492,12 @@ const ChatView = ({ friend, onBack }: { friend: Friend; onBack: () => void }) =>
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
 
   useEffect(() => {
     if (!user) return;
 
-    // Fetch messages
     const fetchMessages = async () => {
       const { data } = await supabase
         .from('messages')
@@ -520,7 +510,6 @@ const ChatView = ({ friend, onBack }: { friend: Friend; onBack: () => void }) =>
       if (data) {
         setMessages(data);
         
-        // Mark as read
         await supabase
           .from('messages')
           .update({ read: true })
@@ -531,7 +520,6 @@ const ChatView = ({ friend, onBack }: { friend: Friend; onBack: () => void }) =>
 
     fetchMessages();
 
-    // Subscribe to new messages
     const channel = supabase
       .channel(`chat-${friend.id}`)
       .on(
@@ -588,7 +576,7 @@ const ChatView = ({ friend, onBack }: { friend: Friend; onBack: () => void }) =>
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-border">
+      <div className="flex items-center gap-3 pb-4 border-b border-border flex-shrink-0">
         <Button variant="ghost" size="icon" onClick={onBack}>
           <ArrowLeft size={20} />
         </Button>
@@ -610,52 +598,62 @@ const ChatView = ({ friend, onBack }: { friend: Friend; onBack: () => void }) =>
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 py-4">
-        <div className="space-y-3">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={cn(
-                "flex",
-                msg.from_user_id === user?.id ? "justify-end" : "justify-start"
-              )}
-            >
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full py-4">
+          <div className="space-y-3 px-1">
+            {messages.length === 0 && (
+              <div className="text-center py-12 text-muted-foreground">
+                <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No messages yet</p>
+                <p className="text-xs">Say hi to {friend.display_name}!</p>
+              </div>
+            )}
+            {messages.map((msg) => (
               <div
+                key={msg.id}
                 className={cn(
-                  "max-w-[80%] px-4 py-2 rounded-2xl",
-                  msg.from_user_id === user?.id
-                    ? "kb-gradient-bg text-white rounded-br-md"
-                    : "bg-muted rounded-bl-md"
+                  "flex",
+                  msg.from_user_id === user?.id ? "justify-end" : "justify-start"
                 )}
               >
-                <p className="text-sm">{msg.content}</p>
-                <p className={cn(
-                  "text-[10px] mt-1",
-                  msg.from_user_id === user?.id ? "text-white/70" : "text-muted-foreground"
-                )}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
+                <div
+                  className={cn(
+                    "max-w-[80%] px-4 py-2.5 rounded-2xl",
+                    msg.from_user_id === user?.id
+                      ? "kb-gradient-bg text-white rounded-br-md"
+                      : "bg-muted rounded-bl-md"
+                  )}
+                >
+                  <p className="text-sm leading-relaxed">{msg.content}</p>
+                  <p className={cn(
+                    "text-[10px] mt-1",
+                    msg.from_user_id === user?.id ? "text-white/70" : "text-muted-foreground"
+                  )}>
+                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
               </div>
-            </div>
-          ))}
-          <div ref={scrollRef} />
-        </div>
-      </ScrollArea>
+            ))}
+            <div ref={scrollRef} />
+          </div>
+        </ScrollArea>
+      </div>
 
-      {/* Input */}
-      <div className="flex gap-2 pt-4 border-t border-border">
+      {/* Input - Fixed at bottom with proper spacing */}
+      <div className="flex gap-2 pt-4 pb-2 border-t border-border flex-shrink-0 bg-background">
         <Input
+          ref={inputRef}
           placeholder="Type a message..."
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-          className="h-11 rounded-full"
+          className="h-12 rounded-full px-5 text-base"
         />
         <Button
           size="icon"
           onClick={sendMessage}
           disabled={!newMessage.trim() || sending}
-          className="h-11 w-11 rounded-full kb-gradient-bg"
+          className="h-12 w-12 rounded-full kb-gradient-bg flex-shrink-0"
         >
           {sending ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
         </Button>
