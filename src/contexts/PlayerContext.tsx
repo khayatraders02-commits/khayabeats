@@ -188,9 +188,13 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
           console.log('Playing from offline storage');
           audioSource = URL.createObjectURL(offline.blob);
         } else {
-          // Fetch from API
+          // Fetch from API - send title/artist for Audius matching
           const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-            body: { videoId: track.videoId },
+            body: { 
+              videoId: track.videoId,
+              title: track.title,
+              artist: track.artist,
+            },
           });
 
           if (error) {
