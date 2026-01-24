@@ -38,12 +38,22 @@ function parseLRC(lrc: string): LRCLine[] {
 // Clean up title for better matching
 function cleanTitle(title: string): string {
   return title
-    .replace(/\(.*?\)/g, '')
+    // Remove common video suffixes
+    .replace(/\(official\s*(music\s*)?video\)/gi, '')
+    .replace(/\(official\s*audio\)/gi, '')
+    .replace(/\(audio\)/gi, '')
+    .replace(/\(lyric\s*video\)/gi, '')
+    .replace(/\(lyrics?\)/gi, '')
+    .replace(/\(visualizer\)/gi, '')
+    .replace(/\(official\)/gi, '')
+    // Remove bracketed content
     .replace(/\[.*?\]/g, '')
-    .replace(/ft\.?|feat\.?|featuring/gi, '')
+    .replace(/\(.*?\)/g, '')
+    // Remove common tags
     .replace(/official\s*(video|audio|music\s*video|lyric\s*video)?/gi, '')
     .replace(/lyrics?/gi, '')
-    .replace(/hd|4k|1080p|audio|video/gi, '')
+    .replace(/hd|hq|4k|1080p|audio|video/gi, '')
+    .replace(/ft\.?|feat\.?|featuring/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -54,6 +64,7 @@ function cleanArtist(artist: string): string {
     .split(/[,&]|ft\.?|feat\.?|featuring|x\s|\/|;/i)[0]
     .replace(/vevo|official|music|topic/gi, '')
     .replace(/\s+-\s+topic$/i, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -69,6 +80,125 @@ function parseDuration(duration?: string): number | null {
   return null;
 }
 
+// LRCLIB API - primary source for synced lyrics
+async function searchLRCLIB(artist: string, title: string, durationSeconds: number | null): Promise<{ lyrics: string | null; syncedLyrics: LRCLine[] | null; synced: boolean } | null> {
+  const searchStrategies = [
+    // Strategy 1: Exact match with duration
+    () => {
+      let url = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
+      if (durationSeconds) url += `&duration=${durationSeconds}`;
+      return { url, method: 'GET' };
+    },
+    // Strategy 2: Search without duration
+    () => ({
+      url: `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`,
+      method: 'GET'
+    }),
+    // Strategy 3: Search API with artist + title
+    () => ({
+      url: `https://lrclib.net/api/search?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`,
+      method: 'GET'
+    }),
+    // Strategy 4: Generic query search  
+    () => ({
+      url: `https://lrclib.net/api/search?q=${encodeURIComponent(`${artist} ${title}`)}`,
+      method: 'GET'
+    }),
+  ];
+
+  for (const getConfig of searchStrategies) {
+    try {
+      const config = getConfig();
+      console.log(`Trying LRCLIB: ${config.url}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      
+      const response = await fetch(config.url, {
+        method: config.method,
+        signal: controller.signal,
+        headers: { 
+          "Accept": "application/json",
+          "User-Agent": "KhayaBeats/1.0",
+        },
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        if (response.status === 404) continue;
+        continue;
+      }
+      
+      const data = await response.json();
+      
+      // Handle array response from search
+      let result = data;
+      if (Array.isArray(data)) {
+        if (data.length === 0) continue;
+        // Find best match - prefer synced lyrics
+        result = data.find((r: any) => r.syncedLyrics) || data[0];
+      }
+      
+      if (result.syncedLyrics) {
+        const parsedLyrics = parseLRC(result.syncedLyrics);
+        if (parsedLyrics.length > 0) {
+          console.log(`Found ${parsedLyrics.length} synced lyrics lines from LRCLIB`);
+          return {
+            lyrics: result.plainLyrics || parsedLyrics.map(l => l.text).join('\n'),
+            syncedLyrics: parsedLyrics,
+            synced: true,
+          };
+        }
+      }
+      
+      if (result.plainLyrics) {
+        console.log("Found plain lyrics from LRCLIB");
+        return {
+          lyrics: result.plainLyrics,
+          syncedLyrics: null,
+          synced: false,
+        };
+      }
+    } catch (e) {
+      console.log("LRCLIB strategy failed:", e);
+      continue;
+    }
+  }
+  
+  return null;
+}
+
+// Fallback: lyrics.ovh (plain lyrics only)
+async function searchLyricsOVH(artist: string, title: string): Promise<string | null> {
+  try {
+    const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
+    console.log(`Trying lyrics.ovh: ${url}`);
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    
+    const response = await fetch(url, { 
+      signal: controller.signal,
+      headers: { "Accept": "application/json" },
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.lyrics) {
+        console.log("Found lyrics from lyrics.ovh");
+        return data.lyrics;
+      }
+    }
+  } catch (e) {
+    console.log("lyrics.ovh error:", e);
+  }
+  
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -77,124 +207,54 @@ serve(async (req) => {
   try {
     const { artist, title, duration } = await req.json();
 
-    if (!artist || !title) {
-      throw new Error("Artist and title are required");
+    if (!title) {
+      throw new Error("Title is required");
     }
 
     const cleanedTitle = cleanTitle(title);
-    const cleanedArtist = cleanArtist(artist);
+    const cleanedArtist = cleanArtist(artist || 'Unknown');
     const durationSeconds = parseDuration(duration);
 
     console.log(`Fetching lyrics for: "${cleanedArtist}" - "${cleanedTitle}" (duration: ${durationSeconds}s)`);
 
-    // Try LRCLIB with multiple search strategies
-    const searchStrategies = [
-      // Strategy 1: Full search with duration
-      () => {
-        let url = `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanedTitle)}&artist_name=${encodeURIComponent(cleanedArtist)}`;
-        if (durationSeconds) url += `&duration=${durationSeconds}`;
-        return url;
-      },
-      // Strategy 2: Search without duration
-      () => `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanedTitle)}&artist_name=${encodeURIComponent(cleanedArtist)}`,
-      // Strategy 3: Generic query search
-      () => `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanedArtist} ${cleanedTitle}`)}`,
-    ];
-
-    for (const getUrl of searchStrategies) {
-      try {
-        const url = getUrl();
-        console.log(`Trying LRCLIB: ${url}`);
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        
-        const response = await fetch(url, {
-          signal: controller.signal,
-          headers: { "Accept": "application/json" },
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) continue;
-        
-        const results = await response.json();
-        
-        if (!Array.isArray(results) || results.length === 0) continue;
-        
-        // Find best match
-        const best = results.find((r: any) => r.syncedLyrics) || results[0];
-        
-        if (best.syncedLyrics) {
-          const parsedLyrics = parseLRC(best.syncedLyrics);
-          console.log(`Found ${parsedLyrics.length} synced lyrics lines from LRCLIB`);
-          
-          return new Response(
-            JSON.stringify({ 
-              lyrics: best.plainLyrics || parsedLyrics.map(l => l.text).join('\n'),
-              syncedLyrics: parsedLyrics,
-              synced: true,
-              source: "lrclib",
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        
-        if (best.plainLyrics) {
-          console.log("Found plain lyrics from LRCLIB");
-          return new Response(
-            JSON.stringify({ 
-              lyrics: best.plainLyrics,
-              syncedLyrics: null,
-              synced: false,
-              source: "lrclib",
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      } catch (e) {
-        console.log("LRCLIB strategy failed:", e);
-        continue;
-      }
+    // Try LRCLIB first (best for synced lyrics)
+    const lrclibResult = await searchLRCLIB(cleanedArtist, cleanedTitle, durationSeconds);
+    
+    if (lrclibResult) {
+      return new Response(
+        JSON.stringify({ 
+          lyrics: lrclibResult.lyrics,
+          syncedLyrics: lrclibResult.syncedLyrics,
+          synced: lrclibResult.synced,
+          source: "lrclib",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // Fallback to lyrics.ovh
-    try {
-      const lyricsUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(cleanedArtist)}/${encodeURIComponent(cleanedTitle)}`;
-      console.log(`Trying lyrics.ovh: ${lyricsUrl}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-      
-      const response = await fetch(lyricsUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.lyrics) {
-          console.log("Found lyrics from lyrics.ovh");
-          return new Response(
-            JSON.stringify({ 
-              lyrics: data.lyrics,
-              syncedLyrics: null,
-              synced: false,
-              source: "lyrics.ovh",
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      }
-    } catch (e) {
-      console.log("lyrics.ovh error:", e);
+    const plainLyrics = await searchLyricsOVH(cleanedArtist, cleanedTitle);
+    
+    if (plainLyrics) {
+      return new Response(
+        JSON.stringify({ 
+          lyrics: plainLyrics,
+          syncedLyrics: null,
+          synced: false,
+          source: "lyrics.ovh",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
+    // No lyrics found
     console.log("No lyrics found from any source");
     return new Response(
       JSON.stringify({ 
         lyrics: null, 
         syncedLyrics: null,
         synced: false,
-        message: "Lyrics not found for this track" 
+        message: "Lyrics not available for this track" 
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
