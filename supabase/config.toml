@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.get-audio-stream]
 verify_jwt = false
+
+[functions.audius-search]
+verify_jwt = false

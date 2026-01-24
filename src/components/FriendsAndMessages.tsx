@@ -639,21 +639,21 @@ const ChatView = ({ friend, onBack }: { friend: Friend; onBack: () => void }) =>
         </ScrollArea>
       </div>
 
-      {/* Input - Fixed at bottom with proper spacing */}
-      <div className="flex gap-2 pt-4 pb-2 border-t border-border flex-shrink-0 bg-background">
+      {/* Input - Fixed at bottom with proper spacing and safe area */}
+      <div className="sticky bottom-0 left-0 right-0 flex gap-3 pt-4 pb-[env(safe-area-inset-bottom,16px)] px-1 border-t border-border bg-background/95 backdrop-blur-sm">
         <Input
           ref={inputRef}
           placeholder="Type a message..."
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-          className="h-12 rounded-full px-5 text-base"
+          className="flex-1 h-12 rounded-2xl px-5 text-base bg-muted/50 border-0 focus-visible:ring-2 focus-visible:ring-primary/50"
         />
         <Button
           size="icon"
           onClick={sendMessage}
           disabled={!newMessage.trim() || sending}
-          className="h-12 w-12 rounded-full kb-gradient-bg flex-shrink-0"
+          className="h-12 w-12 rounded-2xl bg-primary hover:bg-primary/90 shadow-lg flex-shrink-0 transition-all"
         >
           {sending ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
         </Button>
