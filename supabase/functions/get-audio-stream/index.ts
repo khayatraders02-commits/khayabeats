@@ -5,74 +5,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// PRIMARY: Cobalt API (most reliable for YouTube audio extraction)
-async function tryCobalAPI(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  const COBALT_INSTANCES = [
-    "https://api.cobalt.tools",
-    "https://co.wuk.sh",
-    "https://cobalt.api.timelessnesses.me",
-  ];
-
-  for (const instance of COBALT_INSTANCES) {
-    try {
-      console.log(`Trying Cobalt instance: ${instance}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-      
-      const response = await fetch(`${instance}/api/json`, {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          vCodec: "h264",
-          vQuality: "720",
-          aFormat: "mp3",
-          isAudioOnly: true,
-          filenamePattern: "basic",
-          disableMetadata: true,
-        }),
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        console.log(`Cobalt ${instance} returned ${response.status}`);
-        continue;
-      }
-      
-      const data = await response.json();
-      
-      if (data.status === "stream" || data.status === "redirect" || data.status === "picker") {
-        const audioUrl = data.url || data.audio;
-        if (audioUrl) {
-          console.log(`Success from Cobalt: ${instance}`);
-          return { url: audioUrl, mimeType: "audio/mpeg" };
-        }
-      }
-      
-    } catch (e) {
-      console.log(`Cobalt ${instance} failed:`, e);
-      continue;
-    }
-  }
-  
-  return null;
-}
-
-// SECONDARY: Piped API (YouTube frontend alternative)
+// PRIMARY: Piped API instances (most reliable currently)
 async function tryPipedAPI(videoId: string): Promise<{ url: string; mimeType: string } | null> {
+  // Updated list of working Piped instances as of 2025
   const PIPED_INSTANCES = [
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.adminforge.de",
-    "https://api.piped.private.coffee",
-    "https://pipedapi.darkness.services",
-    "https://pipedapi.drgns.space",
-    "https://pipedapi.moomoo.me",
+    "https://pipedapi.r4fo.com",
+    "https://pipedapi.osphost.fi",
+    "https://pipedapi.leptons.xyz",
+    "https://piped-api.lunar.icu",
+    "https://api.piped.yt",
+    "https://pipedapi.in.projectsegfau.lt",
+    "https://pipedapi.colinslegacy.com",
   ];
 
   for (const instance of PIPED_INSTANCES) {
@@ -80,13 +23,13 @@ async function tryPipedAPI(videoId: string): Promise<{ url: string; mimeType: st
       console.log(`Trying Piped instance: ${instance}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       
       const response = await fetch(`${instance}/streams/${videoId}`, {
         signal: controller.signal,
         headers: {
           "Accept": "application/json",
-          "User-Agent": "KhayaBeats/1.0",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
       });
       
@@ -111,7 +54,7 @@ async function tryPipedAPI(videoId: string): Promise<{ url: string; mimeType: st
         continue;
       }
       
-      // Prefer MP4/M4A audio, then highest bitrate
+      // Prefer M4A/MP4 audio (best compatibility), then highest bitrate
       const sortedStreams = audioStreams.sort((a: any, b: any) => {
         const aIsM4a = a.mimeType?.includes('mp4') || a.mimeType?.includes('m4a');
         const bIsM4a = b.mimeType?.includes('mp4') || b.mimeType?.includes('m4a');
@@ -123,14 +66,14 @@ async function tryPipedAPI(videoId: string): Promise<{ url: string; mimeType: st
       });
       
       const bestStream = sortedStreams[0];
-      console.log(`Success from Piped: ${instance}, mime: ${bestStream.mimeType}`);
+      console.log(`✓ Success from Piped: ${instance}, bitrate: ${bestStream.bitrate}`);
       
       return { 
         url: bestStream.url, 
         mimeType: bestStream.mimeType || 'audio/mp4',
       };
     } catch (e) {
-      console.log(`Piped ${instance} failed:`, e);
+      console.log(`Piped ${instance} failed:`, e instanceof Error ? e.message : e);
       continue;
     }
   }
@@ -138,13 +81,16 @@ async function tryPipedAPI(videoId: string): Promise<{ url: string; mimeType: st
   return null;
 }
 
-// TERTIARY: Invidious API (another YouTube alternative frontend)
+// SECONDARY: Invidious API instances
 async function tryInvidiousAPI(videoId: string): Promise<{ url: string; mimeType: string } | null> {
+  // Updated list of working Invidious instances
   const INVIDIOUS_INSTANCES = [
-    "https://invidious.fdn.fr",
-    "https://vid.puffyan.us",
-    "https://invidious.privacydev.net",
-    "https://y.com.sb",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.projectsegfau.lt",
+    "https://inv.nadeko.net",
+    "https://invidious.protokolla.fi",
+    "https://iv.datura.network",
+    "https://invidious.perennialte.ch",
   ];
 
   for (const instance of INVIDIOUS_INSTANCES) {
@@ -152,16 +98,20 @@ async function tryInvidiousAPI(videoId: string): Promise<{ url: string; mimeType
       console.log(`Trying Invidious instance: ${instance}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       
       const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
         signal: controller.signal,
-        headers: { "Accept": "application/json" },
+        headers: { 
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
       });
       
       clearTimeout(timeoutId);
       
       if (!response.ok) {
+        console.log(`Invidious ${instance} returned ${response.status}`);
         continue;
       }
       
@@ -174,14 +124,61 @@ async function tryInvidiousAPI(videoId: string): Promise<{ url: string; mimeType
       );
       
       if (audioFormats.length > 0) {
-        // Prefer highest bitrate audio
-        audioFormats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+        // Prefer M4A, then highest bitrate
+        audioFormats.sort((a: any, b: any) => {
+          const aIsM4a = a.type?.includes('mp4');
+          const bIsM4a = b.type?.includes('mp4');
+          if (aIsM4a && !bIsM4a) return -1;
+          if (bIsM4a && !aIsM4a) return 1;
+          return (b.bitrate || 0) - (a.bitrate || 0);
+        });
+        
         const best = audioFormats[0];
-        console.log(`Success from Invidious: ${instance}`);
+        console.log(`✓ Success from Invidious: ${instance}`);
         return { url: best.url, mimeType: best.type || 'audio/mp4' };
       }
     } catch (e) {
-      console.log(`Invidious ${instance} failed:`, e);
+      console.log(`Invidious ${instance} failed:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+  }
+  
+  return null;
+}
+
+// TERTIARY: NewPipe Extractor via public instances
+async function tryNewPipeExtractor(videoId: string): Promise<{ url: string; mimeType: string } | null> {
+  const EXTRACTOR_INSTANCES = [
+    "https://yt.drgnz.club",
+    "https://watchapi.whatever.social",
+  ];
+
+  for (const instance of EXTRACTOR_INSTANCES) {
+    try {
+      console.log(`Trying extractor: ${instance}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      
+      const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+        signal: controller.signal,
+        headers: { "Accept": "application/json" },
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) continue;
+      
+      const data = await response.json();
+      const audioStreams = data.audioStreams || data.adaptiveFormats?.filter((f: any) => f.type?.includes('audio'));
+      
+      if (audioStreams && audioStreams.length > 0) {
+        const best = audioStreams[0];
+        console.log(`✓ Success from extractor: ${instance}`);
+        return { url: best.url, mimeType: best.mimeType || best.type || 'audio/mp4' };
+      }
+    } catch (e) {
+      console.log(`Extractor ${instance} failed`);
       continue;
     }
   }
@@ -193,15 +190,18 @@ async function tryInvidiousAPI(videoId: string): Promise<{ url: string; mimeType
 async function getAudioStream(videoId: string): Promise<{ url: string; mimeType: string }> {
   console.log(`Getting audio for video: ${videoId}`);
   
-  // Try sources in order of reliability
-  let result = await tryCobalAPI(videoId);
-  if (result) return result;
+  // Try all sources in parallel for speed, use first success
+  const results = await Promise.allSettled([
+    tryPipedAPI(videoId),
+    tryInvidiousAPI(videoId),
+    tryNewPipeExtractor(videoId),
+  ]);
   
-  result = await tryPipedAPI(videoId);
-  if (result) return result;
-  
-  result = await tryInvidiousAPI(videoId);
-  if (result) return result;
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value) {
+      return result.value;
+    }
+  }
   
   throw new Error("All audio sources failed. Please try again later.");
 }
@@ -229,6 +229,8 @@ serve(async (req) => {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "Accept": "*/*",
           "Accept-Language": "en-US,en;q=0.9",
+          "Referer": "https://www.youtube.com/",
+          "Origin": "https://www.youtube.com",
         };
         
         if (rangeHeader) {
