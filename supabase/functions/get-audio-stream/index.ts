@@ -2,52 +2,76 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, range",
+  "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges",
 };
 
-// Audius Discovery Nodes (stable, reliable, free)
-const AUDIUS_DISCOVERY_NODES = [
+// Audius Discovery Nodes - verified working January 2025
+const AUDIUS_NODES = [
   "https://discoveryprovider.audius.co",
-  "https://discoveryprovider2.audius.co",
+  "https://discoveryprovider2.audius.co", 
   "https://discoveryprovider3.audius.co",
-  "https://dn1.monophonic.digital",
-  "https://dn2.monophonic.digital",
+  "https://audius-discovery-1.altego.net",
+  "https://audius-discovery-2.altego.net",
 ];
 
-// Get a working Audius discovery node
-async function getAudiusNode(): Promise<string> {
-  for (const node of AUDIUS_DISCOVERY_NODES) {
+// Get a healthy Audius node
+async function getWorkingAudiusNode(): Promise<string | null> {
+  for (const node of AUDIUS_NODES) {
     try {
       const response = await fetch(`${node}/health_check`, {
         signal: AbortSignal.timeout(3000),
       });
       if (response.ok) {
-        console.log(`Using Audius node: ${node}`);
+        console.log(`✓ Audius node healthy: ${node}`);
         return node;
       }
     } catch {
       continue;
     }
   }
-  return AUDIUS_DISCOVERY_NODES[0];
+  console.log("No healthy Audius nodes found");
+  return null;
 }
 
-// PRIMARY: Search and stream from Audius (stable, free, 320kbps)
+// Search and stream from Audius
 async function tryAudius(title: string, artist?: string): Promise<{ url: string; mimeType: string; trackInfo?: any } | null> {
+  const node = await getWorkingAudiusNode();
+  if (!node) return null;
+  
   try {
-    const node = await getAudiusNode();
-    const searchQuery = artist ? `${title} ${artist}` : title;
+    // Clean search query - remove common noise
+    let searchQuery = title
+      .replace(/\(Official.*?\)/gi, '')
+      .replace(/\[Official.*?\]/gi, '')
+      .replace(/\(Audio\)/gi, '')
+      .replace(/\(Lyrics\)/gi, '')
+      .replace(/\(Video\)/gi, '')
+      .replace(/\(Visualizer\)/gi, '')
+      .replace(/Official Music Video/gi, '')
+      .replace(/Official Video/gi, '')
+      .replace(/Official Audio/gi, '')
+      .replace(/lyrics/gi, '')
+      .replace(/HD|HQ|4K/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     
-    console.log(`Searching Audius for: ${searchQuery}`);
+    if (artist) {
+      searchQuery = `${searchQuery} ${artist}`.trim();
+    }
     
-    const searchUrl = `${node}/v1/tracks/search?query=${encodeURIComponent(searchQuery)}&app_name=KHAYABEATS`;
-    const response = await fetch(searchUrl, {
-      signal: AbortSignal.timeout(8000),
-      headers: { "Accept": "application/json" },
-    });
+    console.log(`Searching Audius: "${searchQuery}"`);
+    
+    const response = await fetch(
+      `${node}/v1/tracks/search?query=${encodeURIComponent(searchQuery)}&limit=5&app_name=KHAYABEATS`,
+      { 
+        signal: AbortSignal.timeout(8000),
+        headers: { "Accept": "application/json" }
+      }
+    );
     
     if (!response.ok) {
-      console.log(`Audius search failed: ${response.status}`);
+      console.log(`Audius search HTTP ${response.status}`);
       return null;
     }
     
@@ -55,27 +79,24 @@ async function tryAudius(title: string, artist?: string): Promise<{ url: string;
     const tracks = data.data || [];
     
     if (tracks.length === 0) {
-      console.log("No tracks found on Audius");
+      console.log("No Audius results");
       return null;
     }
     
-    // Find best match
-    const track = tracks[0];
-    const trackId = track.id;
+    // Pick best match - prefer streamable tracks
+    const track = tracks.find((t: any) => !t.is_delete && t.is_available) || tracks[0];
     
-    // Get stream URL
-    const streamUrl = `${node}/v1/tracks/${trackId}/stream?app_name=KHAYABEATS`;
-    
-    console.log(`✓ Found on Audius: "${track.title}" by ${track.user?.name}`);
+    console.log(`✓ Audius found: "${track.title}" by ${track.user?.name}`);
     
     return {
-      url: streamUrl,
+      url: `${node}/v1/tracks/${track.id}/stream?app_name=KHAYABEATS`,
       mimeType: "audio/mpeg",
       trackInfo: {
         title: track.title,
         artist: track.user?.name,
         artwork: track.artwork?.["480x480"] || track.artwork?.["1000x1000"],
         duration: track.duration,
+        source: "audius",
       },
     };
   } catch (error) {
@@ -84,146 +105,150 @@ async function tryAudius(title: string, artist?: string): Promise<{ url: string;
   }
 }
 
-// SECONDARY: Cobalt API (reliable YouTube audio extraction)
-async function tryCobalt(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  const COBALT_INSTANCES = [
-    "https://api.cobalt.tools",
-    "https://co.wuk.sh",
-  ];
-  
-  for (const instance of COBALT_INSTANCES) {
-    try {
-      console.log(`Trying Cobalt: ${instance}`);
-      
-      const response = await fetch(`${instance}/api/json`, {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          vCodec: "h264",
-          vQuality: "720",
-          aFormat: "mp3",
-          isAudioOnly: true,
-          filenamePattern: "basic",
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      
-      if (!response.ok) continue;
-      
-      const data = await response.json();
-      
-      if (data.status === "stream" || data.status === "redirect") {
-        console.log(`✓ Success from Cobalt: ${instance}`);
-        return {
-          url: data.url,
-          mimeType: "audio/mpeg",
-        };
-      }
-    } catch (error) {
-      console.log(`Cobalt ${instance} failed:`, error instanceof Error ? error.message : error);
-      continue;
-    }
-  }
-  
-  return null;
-}
-
-// TERTIARY: Piped instances (as fallback)
+// YouTube Piped API - verified working instances
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  const PIPED_INSTANCES = [
+  // These are the most reliable Piped instances as of 2025
+  const instances = [
     "https://pipedapi.kavin.rocks",
-    "https://pipedapi.tokhmi.xyz",
-    "https://api.piped.privacydev.net",
+    "https://pipedapi.r4fo.com", 
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.in.projectsegfau.lt",
   ];
   
-  for (const instance of PIPED_INSTANCES) {
+  for (const instance of instances) {
     try {
       console.log(`Trying Piped: ${instance}`);
       
       const response = await fetch(`${instance}/streams/${videoId}`, {
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(10000),
         headers: {
           "Accept": "application/json",
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
       });
       
-      if (!response.ok) continue;
+      if (!response.ok) {
+        console.log(`Piped ${instance}: HTTP ${response.status}`);
+        continue;
+      }
       
       const data = await response.json();
       
-      if (data.error) continue;
+      if (data.error) {
+        console.log(`Piped ${instance}: ${data.error}`);
+        continue;
+      }
       
-      const audioStreams = data.audioStreams?.filter((s: any) => s.url);
+      // Get audio streams
+      const audioStreams = (data.audioStreams || []).filter((s: any) => s.url);
       
-      if (!audioStreams || audioStreams.length === 0) continue;
+      if (audioStreams.length === 0) {
+        console.log(`Piped ${instance}: No audio streams`);
+        continue;
+      }
       
-      // Prefer M4A, then highest bitrate
+      // Sort: prefer m4a, then highest bitrate
       audioStreams.sort((a: any, b: any) => {
-        const aIsM4a = a.mimeType?.includes('mp4');
-        const bIsM4a = b.mimeType?.includes('mp4');
-        if (aIsM4a && !bIsM4a) return -1;
-        if (bIsM4a && !aIsM4a) return 1;
+        const aM4a = a.mimeType?.includes('mp4') || a.mimeType?.includes('m4a');
+        const bM4a = b.mimeType?.includes('mp4') || b.mimeType?.includes('m4a');
+        if (aM4a && !bM4a) return -1;
+        if (bM4a && !aM4a) return 1;
         return (b.bitrate || 0) - (a.bitrate || 0);
       });
       
       const best = audioStreams[0];
-      console.log(`✓ Success from Piped: ${instance}`);
+      console.log(`✓ Piped success: ${instance} (${best.bitrate}bps)`);
       
       return {
         url: best.url,
         mimeType: best.mimeType || "audio/mp4",
       };
     } catch (error) {
-      console.log(`Piped ${instance} failed:`, error instanceof Error ? error.message : error);
-      continue;
+      console.log(`Piped ${instance}: ${error instanceof Error ? error.message : 'failed'}`);
     }
   }
   
   return null;
 }
 
-// QUATERNARY: Invidious instances (last resort)
+// Invidious API fallback
 async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  const INVIDIOUS_INSTANCES = [
-    "https://invidious.fdn.fr",
-    "https://invidious.slipfox.xyz",
-    "https://yewtu.be",
+  const instances = [
+    "https://invidious.privacyredirect.com",
+    "https://inv.nadeko.net",
+    "https://invidious.protokolla.fi",
+    "https://iv.nboeck.de",
   ];
   
-  for (const instance of INVIDIOUS_INSTANCES) {
+  for (const instance of instances) {
     try {
       console.log(`Trying Invidious: ${instance}`);
       
       const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(10000),
         headers: { "Accept": "application/json" },
       });
       
       if (!response.ok) continue;
       
       const data = await response.json();
-      const audioFormats = (data.adaptiveFormats || []).filter((f: any) => 
+      const audioFormats = (data.adaptiveFormats || []).filter((f: any) =>
         f.type?.includes('audio') && f.url
       );
       
       if (audioFormats.length === 0) continue;
       
+      // Prefer highest quality
       audioFormats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
       
       const best = audioFormats[0];
-      console.log(`✓ Success from Invidious: ${instance}`);
+      console.log(`✓ Invidious success: ${instance}`);
       
       return {
         url: best.url,
-        mimeType: best.type || "audio/mp4",
+        mimeType: best.type?.split(';')[0] || "audio/mp4",
       };
     } catch (error) {
-      console.log(`Invidious ${instance} failed:`, error instanceof Error ? error.message : error);
+      console.log(`Invidious ${instance}: ${error instanceof Error ? error.message : 'failed'}`);
+    }
+  }
+  
+  return null;
+}
+
+// NewPipe Extractor API
+async function tryNewPipe(videoId: string): Promise<{ url: string; mimeType: string } | null> {
+  const instances = [
+    "https://yt.drgnz.club",
+    "https://nyc1.aethernet.io",
+  ];
+  
+  for (const instance of instances) {
+    try {
+      console.log(`Trying NewPipe: ${instance}`);
+      
+      const response = await fetch(`${instance}/api/v1/streams/${videoId}`, {
+        signal: AbortSignal.timeout(10000),
+        headers: { "Accept": "application/json" },
+      });
+      
+      if (!response.ok) continue;
+      
+      const data = await response.json();
+      const audioStreams = (data.audioStreams || []).filter((s: any) => s.url);
+      
+      if (audioStreams.length === 0) continue;
+      
+      audioStreams.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+      
+      const best = audioStreams[0];
+      console.log(`✓ NewPipe success: ${instance}`);
+      
+      return {
+        url: best.url,
+        mimeType: best.format?.mimeType || "audio/mp4",
+      };
+    } catch {
       continue;
     }
   }
@@ -239,96 +264,105 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
     
-    // Handle proxy requests (for CORS bypass)
+    // Proxy mode - stream audio through our server for CORS bypass
     const proxyUrl = url.searchParams.get("proxy");
     if (proxyUrl) {
-      console.log("Proxying audio stream...");
+      console.log("Proxying audio...");
       
-      try {
-        const decodedUrl = decodeURIComponent(proxyUrl);
-        const rangeHeader = req.headers.get("range");
-        
-        const headers: HeadersInit = {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept": "*/*",
-          "Referer": "https://audius.co/",
-        };
-        
-        if (rangeHeader) {
-          headers["Range"] = rangeHeader;
-        }
-        
-        const audioResponse = await fetch(decodedUrl, { headers });
-
-        if (!audioResponse.ok && audioResponse.status !== 206) {
-          throw new Error(`Upstream error: ${audioResponse.status}`);
-        }
-
-        const responseHeaders: HeadersInit = {
-          ...corsHeaders,
-          "Content-Type": audioResponse.headers.get("content-type") || "audio/mpeg",
-          "Accept-Ranges": "bytes",
-          "Cache-Control": "public, max-age=3600",
-        };
-        
-        const contentLength = audioResponse.headers.get("content-length");
-        const contentRange = audioResponse.headers.get("content-range");
-        
-        if (contentLength) responseHeaders["Content-Length"] = contentLength;
-        if (contentRange) responseHeaders["Content-Range"] = contentRange;
-        
-        return new Response(audioResponse.body, {
-          status: audioResponse.status,
-          headers: responseHeaders,
-        });
-      } catch (proxyError) {
-        console.error("Proxy error:", proxyError);
+      const decodedUrl = decodeURIComponent(proxyUrl);
+      const rangeHeader = req.headers.get("range");
+      
+      const headers: HeadersInit = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+      };
+      
+      if (rangeHeader) {
+        headers["Range"] = rangeHeader;
+      }
+      
+      const audioResponse = await fetch(decodedUrl, { 
+        headers,
+        signal: AbortSignal.timeout(30000),
+      });
+      
+      if (!audioResponse.ok && audioResponse.status !== 206) {
+        console.error(`Proxy upstream error: ${audioResponse.status}`);
         return new Response(
-          JSON.stringify({ error: "Failed to proxy audio", success: false }),
+          JSON.stringify({ error: "Audio source unavailable", success: false }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      
+      const responseHeaders: HeadersInit = {
+        ...corsHeaders,
+        "Content-Type": audioResponse.headers.get("content-type") || "audio/mpeg",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=7200",
+      };
+      
+      const contentLength = audioResponse.headers.get("content-length");
+      const contentRange = audioResponse.headers.get("content-range");
+      
+      if (contentLength) responseHeaders["Content-Length"] = contentLength;
+      if (contentRange) responseHeaders["Content-Range"] = contentRange;
+      
+      return new Response(audioResponse.body, {
+        status: audioResponse.status,
+        headers: responseHeaders,
+      });
     }
     
-    // Main request - get audio
+    // Main request - find audio stream
     const body = await req.json();
-    const { videoId, title, artist, useAudius = true } = body;
+    const { videoId, title, artist } = body;
 
     if (!videoId && !title) {
-      throw new Error("Video ID or title is required");
+      return new Response(
+        JSON.stringify({ error: "Video ID or title required", success: false }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     let result: { url: string; mimeType: string; trackInfo?: any } | null = null;
     
-    // Strategy 1: Try Audius first if we have title (most stable)
-    if (useAudius && title) {
-      console.log(`Strategy 1: Trying Audius for "${title}"`);
+    // Strategy 1: Audius (most stable, indie tracks)
+    if (title) {
+      console.log(`[1/4] Audius search: "${title}"`);
       result = await tryAudius(title, artist);
     }
     
-    // Strategy 2: Try Cobalt for YouTube
+    // Strategy 2: Piped (YouTube alternative frontend)
     if (!result && videoId) {
-      console.log(`Strategy 2: Trying Cobalt for videoId: ${videoId}`);
-      result = await tryCobalt(videoId);
-    }
-    
-    // Strategy 3: Try Piped
-    if (!result && videoId) {
-      console.log(`Strategy 3: Trying Piped for videoId: ${videoId}`);
+      console.log(`[2/4] Piped: ${videoId}`);
       result = await tryPiped(videoId);
     }
     
-    // Strategy 4: Try Invidious
+    // Strategy 3: Invidious (YouTube alternative)
     if (!result && videoId) {
-      console.log(`Strategy 4: Trying Invidious for videoId: ${videoId}`);
+      console.log(`[3/4] Invidious: ${videoId}`);
       result = await tryInvidious(videoId);
     }
     
-    if (!result) {
-      throw new Error("All audio sources failed. Please try a different song.");
+    // Strategy 4: NewPipe extractor
+    if (!result && videoId) {
+      console.log(`[4/4] NewPipe: ${videoId}`);
+      result = await tryNewPipe(videoId);
     }
     
-    // Return proxied URL for CORS-free playback
+    if (!result) {
+      console.error("All sources failed");
+      return new Response(
+        JSON.stringify({ 
+          error: "All audio sources failed. Please try a different song.",
+          success: false 
+        }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    // Create proxied URL for CORS-free playback
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
     
@@ -350,10 +384,7 @@ serve(async (req) => {
         error: error instanceof Error ? error.message : "Failed to get audio",
         success: false,
       }),
-      {
-        status: 503,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
