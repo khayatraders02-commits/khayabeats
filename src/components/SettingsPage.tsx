@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -24,7 +24,7 @@ import { AudioQualitySheet } from '@/components/AudioQualitySheet';
 export const SettingsPage = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [displayName, setDisplayName] = useState(user?.user_metadata?.display_name || '');
+  const [displayName, setDisplayName] = useState('');
   const [saving, setSaving] = useState(false);
   const { isEnabled: notificationsEnabled, requestPermission, isSupported } = usePushNotifications();
   const { resetOnboarding } = useOnboarding();
@@ -32,18 +32,48 @@ export const SettingsPage = () => {
   const [showSleepTimer, setShowSleepTimer] = useState(false);
   const [showAudioQuality, setShowAudioQuality] = useState(false);
 
+  // Load display name from profiles table on mount
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!user) return;
+      
+      const { data } = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      if (data?.display_name) {
+        setDisplayName(data.display_name);
+      } else {
+        setDisplayName(user.user_metadata?.display_name || user.user_metadata?.full_name || '');
+      }
+    };
+    
+    loadProfile();
+  }, [user]);
+
   const handleSaveProfile = async () => {
     if (!user) return;
     setSaving(true);
     
     try {
-      const { error } = await supabase.from('profiles').upsert({
+      // Update profiles table
+      const { error: profileError } = await supabase.from('profiles').upsert({
         id: user.id,
         display_name: displayName,
         updated_at: new Date().toISOString(),
       });
       
-      if (error) throw error;
+      if (profileError) throw profileError;
+      
+      // Also update user metadata for consistency
+      const { error: authError } = await supabase.auth.updateUser({
+        data: { display_name: displayName }
+      });
+      
+      if (authError) console.warn('Could not update user metadata:', authError);
+      
       toast.success('Profile updated!');
     } catch (error) {
       console.error('Error updating profile:', error);
@@ -329,7 +359,7 @@ export const SettingsPage = () => {
               icon={Phone} 
               title="Contact Us"
               subtitle="Get in touch with support"
-              onClick={() => navigate('/?tab=contact')}
+              onClick={() => navigate('/contact')}
             />
             <Separator className="mx-4" />
             <SettingItem 

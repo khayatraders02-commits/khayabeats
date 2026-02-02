@@ -5,6 +5,10 @@ import { Track } from '@/types/music';
 import { usePlayer } from '@/contexts/PlayerContext';
 import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { getArtistImage } from '@/lib/musicbrainz';
+
+// Artist image cache
+const artistImageCache: Map<string, string | null> = new Map();
 
 // Popular artist data with real YouTube thumbnails will be fetched dynamically
 // We use reliable gradient backgrounds with artist initials as fallback
@@ -221,6 +225,31 @@ interface ArtistAlbumCardProps {
 }
 
 export const ArtistAlbumCard = ({ artist, onPlay }: ArtistAlbumCardProps) => {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
+
+  useEffect(() => {
+    // Check cache first
+    if (artistImageCache.has(artist.name.toLowerCase())) {
+      setImageUrl(artistImageCache.get(artist.name.toLowerCase()) || null);
+      return;
+    }
+
+    // Fetch from MusicBrainz
+    const fetchImage = async () => {
+      try {
+        const url = await getArtistImage(artist.name);
+        artistImageCache.set(artist.name.toLowerCase(), url);
+        setImageUrl(url);
+      } catch (error) {
+        console.log(`Could not fetch image for ${artist.name}`);
+        artistImageCache.set(artist.name.toLowerCase(), null);
+      }
+    };
+
+    fetchImage();
+  }, [artist.name]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -230,15 +259,31 @@ export const ArtistAlbumCard = ({ artist, onPlay }: ArtistAlbumCardProps) => {
       className="group relative overflow-hidden rounded-2xl cursor-pointer"
       onClick={() => onPlay(`${artist.topSongs[0]} ${artist.name}`)}
     >
-      {/* Gradient Background */}
+      {/* Gradient Background - always present as fallback */}
       <div className={cn("absolute inset-0 bg-gradient-to-br", artist.gradient)} />
+      
+      {/* Real Artist Image from MusicBrainz */}
+      {imageUrl && (
+        <img
+          src={imageUrl}
+          alt={artist.name}
+          className={cn(
+            "absolute inset-0 w-full h-full object-cover transition-opacity duration-300",
+            imageLoaded ? "opacity-100" : "opacity-0"
+          )}
+          onLoad={() => setImageLoaded(true)}
+          onError={() => setImageLoaded(false)}
+        />
+      )}
       
       {/* Artist Initial/Image */}
       <div className="relative aspect-[3/4] overflow-hidden flex items-center justify-center">
-        <span className="text-7xl font-black text-white/30">
-          {artist.name.charAt(0)}
-        </span>
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
+        {!imageUrl && (
+          <span className="text-7xl font-black text-white/30">
+            {artist.name.charAt(0)}
+          </span>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
         
         {/* Content */}
         <div className="absolute bottom-0 left-0 right-0 p-4">
