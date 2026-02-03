@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
+import { NowPlayingBubble } from '@/components/NowPlayingBubble';
 
 type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings' | 'contact';
 
@@ -99,8 +100,15 @@ const Index = () => {
         </div>
       </main>
 
+      {/* Now Playing Bubble - Dynamic Island Style */}
       {currentTrack && !showFullPlayer && (
-        <MiniPlayer onExpand={() => setShowFullPlayer(true)} />
+        <>
+          <MiniPlayer onExpand={() => setShowFullPlayer(true)} />
+          <NowPlayingBubble 
+            onClick={() => setShowFullPlayer(true)}
+            className="bottom-40 left-4 right-4 mx-auto max-w-sm hidden sm:flex"
+          />
+        </>
       )}
 
       <AnimatePresence>

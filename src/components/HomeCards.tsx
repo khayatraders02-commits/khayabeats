@@ -3,6 +3,7 @@ import { Play, Shuffle } from 'lucide-react';
 import { Track } from '@/types/music';
 import { usePlayer } from '@/contexts/PlayerContext';
 import { cn } from '@/lib/utils';
+import { KhayaBeatsCover } from '@/components/KhayaBeatsCover';
 
 interface QuickPlayCardProps {
   title: string;
@@ -32,9 +33,7 @@ export const QuickPlayCard = ({ title, subtitle, imageUrl, tracks, gradient }: Q
         {imageUrl ? (
           <img src={imageUrl} alt={title} className="w-full h-full object-cover" />
         ) : (
-          <div className={cn("w-full h-full flex items-center justify-center", gradient || "kb-gradient-bg")}>
-            <span className="text-lg font-bold text-white">{title.charAt(0)}</span>
-          </div>
+          <KhayaBeatsCover title={title} size="sm" className="w-full h-full" />
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -83,12 +82,12 @@ export const FeaturedCard = ({ title, subtitle, description, imageUrl, tracks, l
         large ? "aspect-[16/9]" : "aspect-square"
       )}
     >
-      {/* Background Image */}
+      {/* Background Image or KHAYABEATS Cover */}
       <div className="absolute inset-0">
         {imageUrl ? (
           <img src={imageUrl} alt={title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
         ) : (
-          <div className="w-full h-full kb-gradient-bg" />
+          <KhayaBeatsCover title={title} size="xl" className="w-full h-full rounded-none" />
         )}
       </div>
       
@@ -147,7 +146,7 @@ export const MixCard = ({ title, tracks, color = 'from-primary to-accent' }: Mix
   };
 
   // Get first 4 track thumbnails for grid
-  const thumbnails = tracks.slice(0, 4).map(t => t.thumbnailUrl);
+  const thumbnails = tracks.slice(0, 4).map(t => t.thumbnailUrl).filter(Boolean);
 
   return (
     <motion.div
@@ -156,18 +155,18 @@ export const MixCard = ({ title, tracks, color = 'from-primary to-accent' }: Mix
       onClick={handlePlay}
       className="group relative rounded-2xl overflow-hidden cursor-pointer shadow-xl"
     >
-      {/* Thumbnail Grid or Gradient */}
+      {/* Thumbnail Grid or KHAYABEATS Cover */}
       <div className="aspect-square relative">
         {thumbnails.length >= 4 ? (
           <div className="grid grid-cols-2 gap-0.5 w-full h-full">
-            {thumbnails.map((url, i) => (
+            {thumbnails.slice(0, 4).map((url, i) => (
               <img key={i} src={url} alt="" className="w-full h-full object-cover" />
             ))}
           </div>
         ) : thumbnails.length > 0 ? (
           <img src={thumbnails[0]} alt="" className="w-full h-full object-cover" />
         ) : (
-          <div className={cn("w-full h-full bg-gradient-to-br", color)} />
+          <KhayaBeatsCover title={title} size="xl" className="w-full h-full rounded-none" variant="waves" />
         )}
         
         {/* Overlay */}
