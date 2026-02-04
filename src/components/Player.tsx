@@ -1,7 +1,8 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Play, Pause, SkipBack, SkipForward, Heart, Shuffle, Repeat, Repeat1, 
-  Volume2, VolumeX, ChevronDown, ListMusic, Loader2, Music2, List, Share2, Cast
+  Volume2, VolumeX, ChevronDown, ListMusic, Loader2, Music2, List, Share2, Cast,
+  Download, CheckCircle2
 } from 'lucide-react';
 import { usePlayer } from '@/contexts/PlayerContext';
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -11,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { LyricsLine } from '@/types/music';
 import { QueueView } from '@/components/QueueView';
 import { DeviceConnectButton } from '@/components/DeviceConnect';
+import { useDownload } from '@/hooks/useDownload';
 
 interface MiniPlayerProps {
   onExpand: () => void;
@@ -128,6 +130,7 @@ export const FullPlayer = ({ onCollapse }: FullPlayerProps) => {
     isLoading,
   } = usePlayer();
   
+  const { downloadTrack, checkIsDownloaded, isDownloading, getDownloadProgress } = useDownload();
   const [showLyrics, setShowLyrics] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [lyrics, setLyrics] = useState<string | null>(null);
@@ -136,7 +139,22 @@ export const FullPlayer = ({ onCollapse }: FullPlayerProps) => {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [prevVolume, setPrevVolume] = useState(1);
+  const [isTrackDownloaded, setIsTrackDownloaded] = useState(false);
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Check if current track is downloaded
+  useEffect(() => {
+    if (currentTrack) {
+      checkIsDownloaded(currentTrack.videoId).then(setIsTrackDownloaded);
+    }
+  }, [currentTrack?.videoId, checkIsDownloaded]);
+
+  const handleDownload = async () => {
+    if (currentTrack && !isTrackDownloaded) {
+      await downloadTrack(currentTrack);
+      setIsTrackDownloaded(true);
+    }
+  };
 
   // Fetch lyrics when track changes
   useEffect(() => {
@@ -403,6 +421,38 @@ export const FullPlayer = ({ onCollapse }: FullPlayerProps) => {
           <div className="text-center mb-5">
             <h2 className="text-2xl font-bold mb-1 truncate">{currentTrack.title}</h2>
             <p className="text-muted-foreground">{currentTrack.artist}</p>
+            
+            {/* Download Button */}
+            <div className="flex justify-center mt-3">
+              <motion.button
+                onClick={handleDownload}
+                disabled={isTrackDownloaded || isDownloading(currentTrack.videoId)}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
+                  isTrackDownloaded 
+                    ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                    : "bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20"
+                )}
+                whileTap={{ scale: 0.95 }}
+              >
+                {isTrackDownloaded ? (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span>Downloaded</span>
+                  </>
+                ) : isDownloading(currentTrack.videoId) ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>{Math.round(getDownloadProgress(currentTrack.videoId) || 0)}%</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} />
+                    <span>Download</span>
+                  </>
+                )}
+              </motion.button>
+            </div>
           </div>
 
           {/* Progress bar */}
