@@ -1,166 +1,159 @@
-# 🎵 KHAYABEATS Desktop App - Setup Guide
+# 🎵 KHAYABEATS Desktop App - Complete Setup Guide
 
-This guide will help you install and run KHAYABEATS as a native Windows 10/11 desktop application.
+Build KHAYABEATS as a native Windows 10/11 desktop application.
 
 ---
 
 ## 📋 Prerequisites
 
-Before you begin, make sure you have:
-
-1. **Node.js** (v18 or newer) - [Download here](https://nodejs.org/)
-2. **Git** - [Download here](https://git-scm.com/)
+1. **Node.js** (v18+) - [Download](https://nodejs.org/)
+2. **Git** - [Download](https://git-scm.com/)
 3. **Windows 10/11 (64-bit)**
 
 ---
 
 ## 🚀 Quick Setup (5 Minutes)
 
-### Step 1: Clone the Repository
-
-Open **Command Prompt** or **PowerShell** and run:
+### Step 1: Clone & Install
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/khayabeats.git
 cd khayabeats
-```
-
-### Step 2: Install Dependencies
-
-```bash
 npm install
 ```
 
-### Step 3: Install Electron Dependencies
+### Step 2: Install Electron Dependencies
 
 ```bash
-npm install electron electron-builder --save-dev
+npm install --save-dev electron electron-builder concurrently wait-on
 ```
 
-### Step 4: Run the Desktop App
+### Step 3: Add Build Scripts
 
-For development (hot-reload):
+Add these to your `package.json` scripts section:
+
+```json
+{
+  "scripts": {
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron electron/main.js\"",
+    "electron:build": "npm run build && electron-builder --win --x64",
+    "electron:start": "electron electron/main.js"
+  }
+}
+```
+
+### Step 4: Run in Development Mode
+
 ```bash
 npm run electron:dev
 ```
 
-For production build:
-```bash
-npm run electron:build
-```
+This starts both the Vite dev server AND Electron together!
 
 ---
 
 ## 📦 Building the Windows Installer
 
-To create a Windows installer (`.exe` setup wizard):
-
-### Option A: Using Electron Forge (Recommended)
+### Build the Production App
 
 ```bash
-# Install Electron Forge
-npm install --save-dev @electron-forge/cli @electron-forge/maker-squirrel @electron-forge/maker-zip
-
-# Build the installer
-npx electron-forge make
+npm run electron:build
 ```
 
-The installer will be in: `out/make/squirrel.windows/x64/KHAYABEATS-Setup.exe`
+**Output:** `dist-electron/KHAYABEATS-Setup-1.0.0.exe`
 
-### Option B: Using Electron Builder
-
-```bash
-# Install Electron Builder
-npm install electron-builder --save-dev
-
-# Build for Windows
-npx electron-builder --win
-```
-
-The installer will be in: `dist/KHAYABEATS Setup.exe`
+This creates a proper Windows installer with:
+- Desktop shortcut
+- Start Menu shortcut
+- Uninstaller
+- 64-bit architecture
 
 ---
 
-## 🔧 Configuration
+## 🔧 Configuration Files
 
-### App Settings
+### electron-builder.json (already created)
+Controls how the Windows installer is built.
 
-Edit `electron/main.js` to customize:
+### electron/main.js
+The main Electron process - handles:
+- Window creation
+- System tray
+- Media keys
+- Native menus
 
-- Window size: `width`, `height`
-- Minimum size: `minWidth`, `minHeight`
-- App icon: `icon`
-- Background color: `backgroundColor`
-
-### Build Settings
-
-Edit `electron/forge.config.js` to customize:
-
-- App name and copyright
-- Installer icon
-- Auto-update settings
-- Platform targets
+### electron/preload.js
+Bridge between web app and native features.
 
 ---
 
 ## 🎛️ Features
 
 ### System Tray
-
-- The app minimizes to system tray when closed
-- Double-click tray icon to restore
-- Right-click for quick controls (Play/Pause, Next, Previous)
+- App minimizes to tray when closed
+- Right-click for quick controls
+- Double-click to restore
 
 ### Media Keys
-
-Global media key support:
-- **Play/Pause** - Media Play/Pause key
-- **Next Track** - Media Next key
-- **Previous Track** - Media Previous key
-- **Stop** - Media Stop key
+- Play/Pause, Next, Previous
+- Works globally even when app is minimized
 
 ### Offline Mode
-
-Downloaded songs work offline! Open the app without internet to play your saved music.
+Downloaded songs work without internet!
 
 ---
 
 ## ⚠️ Troubleshooting
 
-### "Windows protected your PC" message
+### "Windows protected your PC"
+Click "More info" → "Run anyway" (app isn't code-signed yet)
 
-This appears because the app isn't code-signed. Click:
-1. "More info"
-2. "Run anyway"
+### Scripts not found
+Make sure you added the scripts to package.json:
+```bash
+npm run
+```
+Should show `electron:dev`, `electron:build`, etc.
 
-### Audio not playing
+### Build fails
+```bash
+# Clear and reinstall
+rm -rf node_modules dist dist-electron
+npm install
+npm run electron:build
+```
 
-1. Check your internet connection
-2. Try a different song
-3. Restart the app
+### Missing dependencies
+```bash
+npm install --save-dev electron electron-builder concurrently wait-on
+```
 
-### App not starting
+---
+
+## 🔄 Alternative: Electron Forge
+
+If you prefer Electron Forge:
 
 ```bash
-# Clear cache and reinstall
-rm -rf node_modules
-npm install
-npm run electron:dev
+npm install --save-dev @electron-forge/cli @electron-forge/maker-squirrel
+npx electron-forge import
+npx electron-forge make
 ```
+
+Output: `out/make/squirrel.windows/x64/KHAYABEATS-Setup.exe`
 
 ---
 
 ## 📱 Also Available On
 
 - **Android APK** - See mobile setup guide
-- **Web Browser** - Visit [khayabeats.app](https://6abb415d-48b6-4355-8a5d-3186a7daeb44.lovableproject.com)
+- **Web Browser** - Visit the live preview
 
 ---
 
 ## 🆘 Support
 
-Having issues? Contact us:
-- 📧 Email: [email protected]
+- 📧 Email: khayabeats@gmail.com
 - 📱 Phone: +27 61 461 7733
 
 ---
