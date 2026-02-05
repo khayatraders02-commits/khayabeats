@@ -66,36 +66,56 @@ export const useDownload = () => {
 
     try {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
-      toast.info(`Downloading "${track.title}"...`);
+      
+      const toastId = toast.loading(`Downloading "${track.title}"...`);
 
       // Get audio URL from edge function
       const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-        body: { videoId: track.videoId },
+        body: { 
+          videoId: track.videoId,
+          title: track.title,
+          artist: track.artist,
+        },
       });
 
-      if (error || !data?.success || !data?.audioUrl) {
+      if (error || !data?.success) {
+        toast.dismiss(toastId);
         throw new Error(data?.error || 'Could not get audio stream');
       }
 
-      // Download and save to IndexedDB
+      // Use the direct URL for download (proxied URL may have issues)
+      const audioUrl = data.directUrl || data.audioUrl;
+      
+      if (!audioUrl) {
+        toast.dismiss(toastId);
+        throw new Error('No audio URL available');
+      }
+
+      // Download and save to IndexedDB with progress
       const success = await saveToIndexedDB(
         track,
-        data.audioUrl,
+        audioUrl,
         (progress) => {
           setDownloading(prev => ({ ...prev, [track.videoId]: progress }));
         }
       );
 
+      toast.dismiss(toastId);
+
       if (success) {
         // Save to database for sync across devices
-        await supabase.from('downloads').upsert({
-          user_id: user.id,
-          video_id: track.videoId,
-          title: track.title,
-          artist: track.artist,
-          thumbnail_url: track.thumbnailUrl,
-          duration: track.duration,
-        }, { onConflict: 'user_id,video_id' });
+        try {
+          await supabase.from('downloads').upsert({
+            user_id: user.id,
+            video_id: track.videoId,
+            title: track.title,
+            artist: track.artist,
+            thumbnail_url: track.thumbnailUrl,
+            duration: track.duration,
+          }, { onConflict: 'user_id,video_id' });
+        } catch (dbErr) {
+          console.log('DB sync failed (non-critical):', dbErr);
+        }
 
         await loadDownloadedTracks();
         toast.success(`"${track.title}" downloaded!`);
@@ -105,7 +125,7 @@ export const useDownload = () => {
       }
     } catch (error) {
       console.error('Download error:', error);
-      toast.error('Download failed. Try again.');
+      toast.error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
     } finally {
       setDownloading(prev => {

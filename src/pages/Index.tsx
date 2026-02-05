@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import { NowPlayingBubble } from '@/components/NowPlayingBubble';
+import { CuratedPlaylistsSection, FeaturedArtistsSection, GenreGridSection } from '@/components/GenreCards';
 
 type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings' | 'contact';
 
@@ -437,30 +438,14 @@ const HomeView = ({ setActiveTab }: { setActiveTab: (tab: Tab) => void }) => {
         </section>
       )}
 
-      {/* Explore Genres */}
-      <section>
-        <SectionHeader title="Browse by genre" />
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { name: 'Hip-Hop', color: 'from-orange-600 to-red-700' },
-            { name: 'Pop', color: 'from-pink-500 to-rose-600' },
-            { name: 'R&B', color: 'from-purple-600 to-indigo-700' },
-            { name: 'Afrobeats', color: 'from-green-500 to-emerald-600' },
-          ].map((genre) => (
-            <motion.div
-              key={genre.name}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              className={cn(
-                "h-24 rounded-xl bg-gradient-to-br p-4 cursor-pointer overflow-hidden relative",
-                genre.color
-              )}
-            >
-              <span className="font-bold text-white">{genre.name}</span>
-            </motion.div>
-          ))}
-        </div>
-      </section>
+      {/* KHAYABEATS AI Curated Playlists */}
+      <CuratedPlaylistsSection onGenreSelect={handleSearchAndPlay} />
+
+      {/* Featured Artists with Real Images */}
+      <FeaturedArtistsSection onGenreSelect={handleSearchAndPlay} />
+
+      {/* Browse Genres */}
+      <GenreGridSection onGenreSelect={handleSearchAndPlay} />
     </motion.div>
   );
 };
