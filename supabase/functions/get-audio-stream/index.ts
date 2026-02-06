@@ -6,7 +6,50 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges",
 };
 
-// PIPED API - Try fewer instances with shorter timeouts for faster failover
+// YOUR PRIVATE YT-DLP SERVER URL
+// Set this in Supabase secrets or update before production
+const YT_SERVER_URL = Deno.env.get("KHAYABEATS_SERVER_URL") || "";
+
+// Try your private yt-dlp server first
+async function tryYTServer(videoId: string, title?: string, artist?: string): Promise<{ url: string; mimeType: string } | null> {
+  if (!YT_SERVER_URL) {
+    console.log("[YT-Server] No server URL configured");
+    return null;
+  }
+  
+  try {
+    console.log(`[YT-Server] Trying: ${YT_SERVER_URL}`);
+    
+    const response = await fetch(`${YT_SERVER_URL}/audio-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoId, title, artist }),
+      signal: AbortSignal.timeout(30000), // Allow longer for downloads
+    });
+    
+    if (!response.ok) {
+      console.log(`[YT-Server] HTTP ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    
+    if (data.success && data.audioUrl) {
+      console.log(`✓ [YT-Server] Success! Cached: ${data.cached}`);
+      return {
+        url: data.audioUrl,
+        mimeType: "audio/mpeg",
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.log(`[YT-Server] Error: ${error instanceof Error ? error.message : 'failed'}`);
+    return null;
+  }
+}
+
+// PIPED API - Fallback when yt-server is offline
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
   const instances = [
     "https://pipedapi.r4fo.com",
@@ -48,7 +91,7 @@ async function tryPiped(videoId: string): Promise<{ url: string; mimeType: strin
   return null;
 }
 
-// INVIDIOUS - Fewer instances, faster timeout
+// INVIDIOUS - Another fallback
 async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: string } | null> {
   const instances = [
     "https://inv.odyssey346.dev",
@@ -93,7 +136,7 @@ async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: s
   return null;
 }
 
-// AUDIUS - Decentralized music (works reliably!)
+// AUDIUS - Decentralized music (reliable for indie)
 async function tryAudius(title: string, artist?: string): Promise<{ url: string; mimeType: string; trackInfo?: any } | null> {
   const nodes = [
     "https://discoveryprovider.audius.co",
@@ -103,11 +146,9 @@ async function tryAudius(title: string, artist?: string): Promise<{ url: string;
   
   for (const node of nodes) {
     try {
-      // Quick health check
       const health = await fetch(`${node}/health_check`, { signal: AbortSignal.timeout(2000) });
       if (!health.ok) continue;
       
-      // Clean search query
       let query = title
         .replace(/\(Official.*?\)/gi, '')
         .replace(/\[.*?\]/gi, '')
@@ -136,7 +177,6 @@ async function tryAudius(title: string, artist?: string): Promise<{ url: string;
         continue;
       }
       
-      // Find best match - prefer non-covers, then fall back to anything
       const validTracks = tracks.filter((t: any) => !t.is_delete && t.is_available);
       
       const track = validTracks.find((t: any) => {
@@ -238,21 +278,32 @@ serve(async (req) => {
     console.log(`Title: ${title} | Artist: ${artist} | VideoID: ${videoId}`);
 
     let result: { url: string; mimeType: string; trackInfo?: any } | null = null;
+    let serverOnline = false;
     
-    // Strategy: Try YouTube proxies first (for original tracks), then Audius
-    if (videoId) {
-      console.log(`[1/3] Piped...`);
-      result = await tryPiped(videoId);
-      
-      if (!result) {
-        console.log(`[2/3] Invidious...`);
-        result = await tryInvidious(videoId);
+    // Strategy 1: Try YOUR private yt-dlp server FIRST (best quality, reliable)
+    if (videoId && YT_SERVER_URL) {
+      console.log(`[1/4] Your yt-dlp server...`);
+      result = await tryYTServer(videoId, title, artist);
+      if (result) {
+        serverOnline = true;
       }
     }
     
-    // Audius as fallback (works reliably but may return covers for mainstream)
+    // Strategy 2: Fall back to Piped (YouTube proxy)
+    if (!result && videoId) {
+      console.log(`[2/4] Piped...`);
+      result = await tryPiped(videoId);
+    }
+    
+    // Strategy 3: Invidious 
+    if (!result && videoId) {
+      console.log(`[3/4] Invidious...`);
+      result = await tryInvidious(videoId);
+    }
+    
+    // Strategy 4: Audius (for indie music)
     if (!result && title) {
-      console.log(`[3/3] Audius...`);
+      console.log(`[4/4] Audius...`);
       result = await tryAudius(title, artist);
     }
     
@@ -260,16 +311,20 @@ serve(async (req) => {
       console.error("❌ All sources failed");
       return new Response(
         JSON.stringify({ 
-          error: "Unable to stream this track. The song may not be available. Try a different song.",
+          error: "Unable to stream this track. Try a different song or check if the server is running.",
+          serverOnline: false,
           success: false,
         }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     
-    // Create proxied URL
+    // Create proxied URL (unless it's already from your server)
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
+    const isYTServerUrl = result.url.includes("localhost") || result.url.includes("3001");
+    const proxyEndpoint = isYTServerUrl 
+      ? result.url 
+      : `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
     
     console.log(`✅ Audio ready!`);
     
@@ -279,6 +334,7 @@ serve(async (req) => {
         directUrl: result.url,
         mimeType: result.mimeType,
         trackInfo: result.trackInfo,
+        serverOnline,
         success: true,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -289,6 +345,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Failed to get audio",
+        serverOnline: false,
         success: false,
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
