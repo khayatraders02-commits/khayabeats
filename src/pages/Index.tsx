@@ -29,6 +29,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import { NowPlayingBubble } from '@/components/NowPlayingBubble';
 import { CuratedPlaylistsSection, FeaturedArtistsSection, GenreGridSection } from '@/components/GenreCards';
+import { ServerStatusBanner, ServerStatusIndicator } from '@/components/ServerStatusBanner';
 
 type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings' | 'contact';
 
@@ -299,6 +300,14 @@ const HomeView = ({ setActiveTab }: { setActiveTab: (tab: Tab) => void }) => {
             </>
           )}
         </div>
+      </div>
+
+      {/* Server Status Banner - Shows when server is offline */}
+      <ServerStatusBanner />
+
+      {/* Server Status Indicator */}
+      <div className="flex items-center justify-between">
+        <ServerStatusIndicator />
       </div>
 
       {/* Smart Shuffle Card */}
