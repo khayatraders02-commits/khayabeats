@@ -4,6 +4,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getDownloadedTrack } from '@/lib/offlineStorage';
 
+// Local yt-dlp server URL (runs on user's PC)
+const LOCAL_SERVER_URL = 'http://localhost:3001';
+
 interface PlayerContextType extends PlayerState {
   play: (track?: Track, queue?: Track[]) => void;
   pause: () => void;
@@ -188,24 +191,54 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
           console.log('Playing from offline storage');
           audioSource = URL.createObjectURL(offline.blob);
         } else {
-          // Fetch from API - send title/artist for Audius matching
-          const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-            body: { 
-              videoId: track.videoId,
-              title: track.title,
-              artist: track.artist,
-            },
-          });
+          // TRY LOCAL YT-DLP SERVER FIRST (runs on user's PC)
+          let localServerOnline = false;
+          
+          try {
+            console.log('[LocalServer] Trying local yt-dlp server...');
+            const localResponse = await fetch(`${LOCAL_SERVER_URL}/audio-url`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                videoId: track.videoId, 
+                title: track.title, 
+                artist: track.artist 
+              }),
+              signal: AbortSignal.timeout(30000), // 30s for downloads
+            });
+            
+            if (localResponse.ok) {
+              const localData = await localResponse.json();
+              if (localData.success && localData.audioUrl) {
+                console.log('[LocalServer] ✓ Got audio from local server');
+                audioSource = localData.audioUrl;
+                localServerOnline = true;
+              }
+            }
+          } catch (e) {
+            console.log('[LocalServer] Offline, falling back to cloud...');
+          }
+          
+          // FALLBACK: Use cloud edge function if local server is offline
+          if (!localServerOnline) {
+            const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+              body: { 
+                videoId: track.videoId,
+                title: track.title,
+                artist: track.artist,
+              },
+            });
 
-          if (error) {
-            throw new Error(error.message || 'Network error');
+            if (error) {
+              throw new Error(error.message || 'Network error');
+            }
+            
+            if (!data?.success || !data?.audioUrl) {
+              throw new Error(data?.error || 'Server offline - start your local server');
+            }
+            
+            audioSource = data.audioUrl;
           }
-          
-          if (!data?.success || !data?.audioUrl) {
-            throw new Error(data?.error || 'Could not get audio stream');
-          }
-          
-          audioSource = data.audioUrl;
         }
 
         // Double check we're still loading the same track
