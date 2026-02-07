@@ -65,13 +65,8 @@ app.get('/health', (req, res) => {
 });
 
 /**
- * Stream audio
- * GET /stream?id=<videoId>
- * 
- * Flow:
- * 1. Check if song is in cache
- * 2. If cached, stream from cache
- * 3. If not cached, request from yt-engine and stream
+ * Stream audio - supports webm, m4a, opus, mp3
+ * GET /stream/:videoId
  */
 app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
@@ -81,12 +76,23 @@ app.get('/stream/:videoId', async (req, res) => {
   }
   
   try {
-    const cachedFile = path.join(CONFIG.CACHE_DIR, `${videoId}.mp3`);
+    // Find cached file (any format)
+    const formats = ['.webm', '.m4a', '.opus', '.mp3'];
+    let cachedFile = null;
+    let contentType = 'audio/mpeg';
     
-    // Check if cached
-    if (fs.existsSync(cachedFile)) {
-      console.log(`[CACHE HIT] Streaming ${videoId} from cache`);
-      return streamFile(cachedFile, res);
+    for (const ext of formats) {
+      const filePath = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
+      if (fs.existsSync(filePath)) {
+        cachedFile = filePath;
+        contentType = getContentType(ext);
+        break;
+      }
+    }
+    
+    if (cachedFile) {
+      console.log(`[CACHE HIT] Streaming ${videoId}`);
+      return streamFile(cachedFile, contentType, res);
     }
     
     console.log(`[CACHE MISS] Fetching ${videoId} from yt-engine`);
@@ -108,14 +114,9 @@ app.get('/stream/:videoId', async (req, res) => {
       throw new Error(data.error || 'Download failed');
     }
     
-    // Move to cache and stream
-    const tempFile = data.filePath;
-    fs.copyFileSync(tempFile, cachedFile);
-    
-    // Clean temp file after copying
-    try { fs.unlinkSync(tempFile); } catch(e) {}
-    
-    return streamFile(cachedFile, res);
+    // Stream the downloaded file
+    const ext = path.extname(data.filePath);
+    return streamFile(data.filePath, getContentType(ext), res);
     
   } catch (error) {
     console.error(`[ERROR] Stream failed for ${videoId}:`, error.message);
@@ -124,7 +125,7 @@ app.get('/stream/:videoId', async (req, res) => {
 });
 
 /**
- * Get audio URL (for web clients that can't stream directly)
+ * Get audio URL (for web clients)
  * POST /audio-url
  * Body: { videoId: string, title?: string, artist?: string }
  */
@@ -136,16 +137,18 @@ app.post('/audio-url', async (req, res) => {
   }
   
   try {
-    const cachedFile = path.join(CONFIG.CACHE_DIR, `${videoId}.mp3`);
-    
-    // Check if cached
-    if (fs.existsSync(cachedFile)) {
-      console.log(`[CACHE HIT] ${videoId}`);
-      return res.json({
-        success: true,
-        audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
-        cached: true,
-      });
+    // Check if already cached (any format)
+    const formats = ['.webm', '.m4a', '.opus', '.mp3'];
+    for (const ext of formats) {
+      const cachedFile = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
+      if (fs.existsSync(cachedFile)) {
+        console.log(`[CACHE HIT] ${videoId}`);
+        return res.json({
+          success: true,
+          audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
+          cached: true,
+        });
+      }
     }
     
     console.log(`[CACHE MISS] Queueing ${videoId}`);
@@ -161,12 +164,6 @@ app.post('/audio-url', async (req, res) => {
     
     if (!data.success) {
       throw new Error(data.error || 'Download failed');
-    }
-    
-    // Move to cache
-    if (data.filePath && fs.existsSync(data.filePath)) {
-      fs.copyFileSync(data.filePath, cachedFile);
-      try { fs.unlinkSync(data.filePath); } catch(e) {}
     }
     
     return res.json({
@@ -261,7 +258,18 @@ app.post('/cache/cleanup', (req, res) => {
 
 // ==================== HELPERS ====================
 
-function streamFile(filePath, res) {
+function getContentType(ext) {
+  const types = {
+    '.mp3': 'audio/mpeg',
+    '.webm': 'audio/webm',
+    '.m4a': 'audio/mp4',
+    '.opus': 'audio/opus',
+    '.ogg': 'audio/ogg',
+  };
+  return types[ext] || 'audio/mpeg';
+}
+
+function streamFile(filePath, contentType, res) {
   const stat = fs.statSync(filePath);
   const range = res.req.headers.range;
   
@@ -275,14 +283,14 @@ function streamFile(filePath, res) {
       'Content-Range': `bytes ${start}-${end}/${stat.size}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
-      'Content-Type': 'audio/mpeg',
+      'Content-Type': contentType,
     });
     
     fs.createReadStream(filePath, { start, end }).pipe(res);
   } else {
     res.writeHead(200, {
       'Content-Length': stat.size,
-      'Content-Type': 'audio/mpeg',
+      'Content-Type': contentType,
     });
     fs.createReadStream(filePath).pipe(res);
   }
