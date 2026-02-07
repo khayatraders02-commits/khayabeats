@@ -2,7 +2,13 @@ import { motion } from 'framer-motion';
 import { Music } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Artist images - imported from assets
+// Import all artist images
+import drakeImage from '@/assets/artists/drake.png';
+import beyonceImage from '@/assets/artists/beyonce.png';
+import kendrickImage from '@/assets/artists/kendrick-lamar.png';
+import chrisBrownImage from '@/assets/artists/chris-brown.png';
+import usherImage from '@/assets/artists/usher.png';
+import rihannaImage from '@/assets/artists/rihanna.png';
 import szaImage from '@/assets/artists/sza.png';
 import taylorSwiftImage from '@/assets/artists/taylor-swift.png';
 import theWeekndImage from '@/assets/artists/the-weeknd.png';
@@ -95,8 +101,14 @@ export const genreList = [
   { id: 'retro', title: '70s-80s', gradient: 'retro' as const, query: '70s 80s hits classic' },
 ];
 
-// Featured artists with real images
+// Featured artists with all real images
 export const featuredArtists = [
+  { id: 'drake', name: 'Drake', image: drakeImage, query: 'Drake official songs' },
+  { id: 'beyonce', name: 'Beyoncé', image: beyonceImage, query: 'Beyonce songs' },
+  { id: 'kendrick', name: 'Kendrick Lamar', image: kendrickImage, query: 'Kendrick Lamar songs' },
+  { id: 'chris-brown', name: 'Chris Brown', image: chrisBrownImage, query: 'Chris Brown songs' },
+  { id: 'usher', name: 'Usher', image: usherImage, query: 'Usher songs' },
+  { id: 'rihanna', name: 'Rihanna', image: rihannaImage, query: 'Rihanna songs' },
   { id: 'sza', name: 'SZA', image: szaImage, query: 'SZA official songs' },
   { id: 'taylor', name: 'Taylor Swift', image: taylorSwiftImage, query: 'Taylor Swift songs' },
   { id: 'weeknd', name: 'The Weeknd', image: theWeekndImage, query: 'The Weeknd songs' },

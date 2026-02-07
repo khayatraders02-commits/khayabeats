@@ -20,15 +20,18 @@ const PORT = process.env.YT_ENGINE_PORT || 3002;
 // Configuration
 const CONFIG = {
   TEMP_DIR: path.join(__dirname, 'temp'),
+  CACHE_DIR: path.join(__dirname, '..', 'storage', 'music-cache'),
   MAX_CONCURRENT_DOWNLOADS: 10,
   DOWNLOAD_TIMEOUT: 120000, // 2 minutes
   YT_DLP_PATH: getYtDlpPath(),
 };
 
-// Ensure temp directory exists
-if (!fs.existsSync(CONFIG.TEMP_DIR)) {
-  fs.mkdirSync(CONFIG.TEMP_DIR, { recursive: true });
-}
+// Ensure directories exist
+[CONFIG.TEMP_DIR, CONFIG.CACHE_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
 
 app.use(express.json());
 
@@ -90,16 +93,19 @@ app.post('/fetch', async (req, res) => {
   
   console.log(`[QUEUE] Adding ${videoId} to download queue (${stats.currentQueue} in queue)`);
   
-  // Check if already downloaded
-  const existingFile = path.join(CONFIG.TEMP_DIR, `${videoId}.mp3`);
-  if (fs.existsSync(existingFile)) {
-    stats.currentQueue--;
-    console.log(`[CACHE] ${videoId} already exists`);
-    return res.json({
-      success: true,
-      filePath: existingFile,
-      cached: true,
-    });
+  // Check if already downloaded (any format)
+  const formats = ['.webm', '.m4a', '.opus', '.mp3'];
+  for (const ext of formats) {
+    const existingFile = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
+    if (fs.existsSync(existingFile)) {
+      stats.currentQueue--;
+      console.log(`[CACHE] ${videoId} already exists`);
+      return res.json({
+        success: true,
+        filePath: existingFile,
+        cached: true,
+      });
+    }
   }
   
   // Add to queue
@@ -169,23 +175,20 @@ function getYtDlpPath() {
 }
 
 /**
- * Download audio from YouTube
+ * Download audio from YouTube - NO FFMPEG REQUIRED
+ * Downloads best audio in native format (webm/m4a/opus)
  */
 async function downloadAudio(videoId, title, artist) {
   return new Promise((resolve, reject) => {
-    const outputFile = path.join(CONFIG.TEMP_DIR, `${videoId}.mp3`);
-    const tempFile = path.join(CONFIG.TEMP_DIR, `${videoId}.temp.%(ext)s`);
+    const tempFile = path.join(CONFIG.TEMP_DIR, `${videoId}.%(ext)s`);
     
-    // yt-dlp arguments for best audio quality
+    // yt-dlp arguments - NO conversion, keeps original format
     const args = [
       `https://www.youtube.com/watch?v=${videoId}`,
-      '--extract-audio',
-      '--audio-format', 'mp3',
-      '--audio-quality', '0', // Best quality
+      '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
       '--output', tempFile,
       '--no-playlist',
       '--no-warnings',
-      '--quiet',
       '--no-check-certificates',
       // Avoid rate limiting
       '--sleep-interval', '1',
@@ -208,15 +211,21 @@ async function downloadAudio(videoId, title, artist) {
     });
     
     process.on('close', (code) => {
-      // Find the downloaded file (yt-dlp adds extension)
-      const expectedOutput = path.join(CONFIG.TEMP_DIR, `${videoId}.temp.mp3`);
-      
-      if (code === 0 && fs.existsSync(expectedOutput)) {
-        // Rename to final filename
-        fs.renameSync(expectedOutput, outputFile);
-        resolve({ filePath: outputFile });
-      } else if (fs.existsSync(outputFile)) {
-        resolve({ filePath: outputFile });
+      if (code === 0) {
+        // Find the downloaded file (check multiple extensions)
+        const formats = ['.webm', '.m4a', '.opus', '.mp3'];
+        for (const ext of formats) {
+          const downloadedFile = path.join(CONFIG.TEMP_DIR, `${videoId}${ext}`);
+          if (fs.existsSync(downloadedFile)) {
+            // Move to cache directory
+            const cachedFile = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
+            fs.copyFileSync(downloadedFile, cachedFile);
+            fs.unlinkSync(downloadedFile);
+            console.log(`[CACHED] ${videoId}${ext}`);
+            return resolve({ filePath: cachedFile });
+          }
+        }
+        reject(new Error('Download completed but file not found'));
       } else {
         reject(new Error(`yt-dlp exited with code ${code}: ${stderr}`));
       }
@@ -333,15 +342,11 @@ app.listen(PORT, () => {
 ║   🎵 KHAYABEATS YT-DLP Engine                          ║
 ║                                                        ║
 ║   Running on: http://localhost:${PORT}                   ║
-║   Temp Dir:   ${CONFIG.TEMP_DIR}
+║   Cache Dir:  ${CONFIG.CACHE_DIR}
 ║   yt-dlp:     ${CONFIG.YT_DLP_PATH}
 ║   Max Concurrent: ${CONFIG.MAX_CONCURRENT_DOWNLOADS}                                ║
 ║                                                        ║
-║   Endpoints:                                           ║
-║   • GET  /health          - Health check               ║
-║   • POST /fetch           - Download audio             ║
-║   • GET  /search?q=       - Search YouTube             ║
-║   • GET  /queue           - Queue status               ║
+║   ⚠️  NO FFMPEG REQUIRED - streams native audio       ║
 ║                                                        ║
 ╚════════════════════════════════════════════════════════╝
   `);
@@ -355,8 +360,9 @@ app.listen(PORT, () => {
     Please install yt-dlp:
     
     Windows: 
-      1. Download from https://github.com/yt-dlp/yt-dlp/releases
-      2. Place yt-dlp.exe in the yt-engine folder
+      pip install yt-dlp
+      OR
+      Download from https://github.com/yt-dlp/yt-dlp/releases
     
     macOS/Linux:
       pip install yt-dlp

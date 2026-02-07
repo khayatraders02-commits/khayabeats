@@ -1,44 +1,31 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { Server, ServerOff, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { ServerOff, RefreshCw } from 'lucide-react';
 import { useServerStatus } from '@/hooks/useServerStatus';
 import { cn } from '@/lib/utils';
 
 export const ServerStatusBanner = () => {
-  const { isOnline, isChecking, checkServerHealth, cacheStats } = useServerStatus();
+  const { isOnline, isChecking, checkServerHealth } = useServerStatus();
 
   return (
     <AnimatePresence>
       {!isOnline && !isChecking && (
         <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          className="bg-destructive/10 border border-destructive/30 rounded-xl p-4 mb-4"
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          className="bg-destructive/10 border border-destructive/30 rounded-xl p-3 mb-4 flex items-center justify-between"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-destructive/20 flex items-center justify-center">
-              <ServerOff size={20} className="text-destructive" />
-            </div>
-            <div className="flex-1">
-              <h4 className="font-semibold text-destructive">Server Offline</h4>
-              <p className="text-xs text-muted-foreground">
-                Start your local server to stream music
-              </p>
-            </div>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={checkServerHealth}
-              className="p-2 rounded-full bg-background/50 hover:bg-background transition-colors"
-            >
-              <RefreshCw size={18} className="text-muted-foreground" />
-            </motion.button>
+          <div className="flex items-center gap-2">
+            <ServerOff size={16} className="text-destructive" />
+            <span className="text-sm font-medium text-destructive">Server Offline</span>
           </div>
-          
-          <div className="mt-3 pt-3 border-t border-destructive/20">
-            <p className="text-xs text-muted-foreground font-mono">
-              Run: <span className="text-foreground">cd khayabeats-server && npm start</span>
-            </p>
-          </div>
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={checkServerHealth}
+            className="p-1.5 rounded-full hover:bg-background/50 transition-colors"
+          >
+            <RefreshCw size={14} className="text-muted-foreground" />
+          </motion.button>
         </motion.div>
       )}
     </AnimatePresence>
@@ -51,40 +38,38 @@ export const ServerStatusIndicator = () => {
   return (
     <motion.div
       className={cn(
-        "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium",
+        "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium",
         isOnline 
-          ? "bg-primary/10 text-primary border border-primary/30" 
-          : "bg-destructive/10 text-destructive border border-destructive/30"
+          ? "bg-primary/10 text-primary" 
+          : "bg-destructive/10 text-destructive"
       )}
-      initial={{ scale: 0.9 }}
-      animate={{ scale: 1 }}
     >
       {isChecking ? (
         <>
           <motion.div
-            className="w-2 h-2 rounded-full bg-accent"
-            animate={{ opacity: [1, 0.5, 1] }}
+            className="w-1.5 h-1.5 rounded-full bg-muted-foreground"
+            animate={{ opacity: [1, 0.3, 1] }}
             transition={{ duration: 1, repeat: Infinity }}
           />
-          <span>Checking...</span>
+          <span>...</span>
         </>
       ) : isOnline ? (
         <>
           <motion.div
-            className="w-2 h-2 rounded-full bg-primary"
-            animate={{ scale: [1, 1.2, 1] }}
+            className="w-1.5 h-1.5 rounded-full bg-primary"
+            animate={{ scale: [1, 1.3, 1] }}
             transition={{ duration: 2, repeat: Infinity }}
           />
-          <span>Server Online</span>
-          {cacheStats && (
-            <span className="text-muted-foreground">
-              ({cacheStats.totalFiles} songs)
+          <span>Online</span>
+          {cacheStats && cacheStats.totalFiles > 0 && (
+            <span className="text-muted-foreground ml-1">
+              • {cacheStats.totalFiles}
             </span>
           )}
         </>
       ) : (
         <>
-          <div className="w-2 h-2 rounded-full bg-destructive" />
+          <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
           <span>Offline</span>
         </>
       )}
