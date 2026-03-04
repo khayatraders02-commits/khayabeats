@@ -100,7 +100,7 @@ export const useDownload = () => {
         }
 
         await loadDownloadedTracks();
-        toast.success(`"${track.title}" downloaded!`);
+        if (!silent) toast.success(`"${track.title}" downloaded!`);
         return true;
       } else {
         throw new Error('Failed to save to device');
