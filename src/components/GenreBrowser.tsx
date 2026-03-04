@@ -88,14 +88,10 @@ export const GenreBrowser = ({ onClose, embedded = false }: GenreBrowserProps) =
       const allTracks: Track[] = [];
       
       for (const term of genre.searchTerms.slice(0, 2)) {
-        const { data, error } = await supabase.functions.invoke('youtube-search', {
-          body: { query: term },
-        });
+        const data = await searchMusicCatalog(term);
 
-        if (error) throw error;
-        
-        if (data.results) {
-          allTracks.push(...data.results);
+        if (data.songs) {
+          allTracks.push(...data.songs);
         }
       }
 
