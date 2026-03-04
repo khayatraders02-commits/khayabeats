@@ -45,3 +45,27 @@ export interface DownloadedTrack extends Track {
   audioBlob: Blob;
   downloadedAt: Date;
 }
+
+export interface ArtistProfile {
+  id: string;
+  name: string;
+  bio?: string;
+  profileImage?: string;
+  bannerImage?: string;
+  genres?: string[];
+  monthlyListeners?: number;
+}
+
+export interface Album {
+  id: string;
+  title: string;
+  artist: string;
+  coverImage?: string;
+  releaseDate?: string;
+}
+
+export interface SearchCatalog {
+  artists: ArtistProfile[];
+  songs: Track[];
+  albums: Album[];
+}

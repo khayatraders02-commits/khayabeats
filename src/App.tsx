@@ -8,8 +8,10 @@ import { PlayerProvider } from "@/contexts/PlayerContext";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import ArtistProfile from "./pages/ArtistProfile";
 import { TermsPage, PrivacyPage } from "./components/LegalPages";
 import { ContactPage } from "./components/ContactPage";
+import { BackgroundAudioManager } from "./components/BackgroundAudioManager";
 
 const queryClient = new QueryClient();
 
@@ -20,9 +22,11 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <BackgroundAudioManager />
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Index />} />
+              <Route path="/artist/:artistId" element={<ArtistProfile />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy" element={<PrivacyPage />} />

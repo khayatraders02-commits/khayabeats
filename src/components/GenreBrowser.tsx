@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Play, Loader2, Music2 } from 'lucide-react';
 import { usePlayer } from '@/contexts/PlayerContext';
 import { Track } from '@/types/music';
-import { supabase } from '@/integrations/supabase/client';
 import { TrackCard } from '@/components/TrackCard';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { searchMusicCatalog } from '@/lib/localMusicApi';
 
 interface Genre {
   id: string;
@@ -88,14 +88,10 @@ export const GenreBrowser = ({ onClose, embedded = false }: GenreBrowserProps) =
       const allTracks: Track[] = [];
       
       for (const term of genre.searchTerms.slice(0, 2)) {
-        const { data, error } = await supabase.functions.invoke('youtube-search', {
-          body: { query: term },
-        });
+        const data = await searchMusicCatalog(term);
 
-        if (error) throw error;
-        
-        if (data.results) {
-          allTracks.push(...data.results);
+        if (data.songs) {
+          allTracks.push(...data.songs);
         }
       }
 
@@ -249,14 +245,10 @@ export const GenreCards = () => {
     
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('youtube-search', {
-        body: { query: genre.searchTerms[0] },
-      });
+      const data = await searchMusicCatalog(genre.searchTerms[0]);
 
-      if (error) throw error;
-      
-      if (data.results && data.results.length > 0) {
-        play(data.results[0], data.results);
+      if (data.songs && data.songs.length > 0) {
+        play(data.songs[0], data.songs);
         toast.success(`Playing ${genre.name} mix`);
       }
     } catch (error) {

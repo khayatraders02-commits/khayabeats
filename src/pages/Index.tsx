@@ -30,6 +30,8 @@ import { toast } from 'sonner';
 import { NowPlayingBubble } from '@/components/NowPlayingBubble';
 import { CuratedPlaylistsSection, FeaturedArtistsSection, GenreGridSection } from '@/components/GenreCards';
 import { ServerStatusBanner, ServerStatusIndicator } from '@/components/ServerStatusBanner';
+import { OfflineModeView } from '@/components/OfflineModeView';
+import { searchMusicCatalog } from '@/lib/localMusicApi';
 
 type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings' | 'contact';
 
@@ -41,6 +43,8 @@ const Index = () => {
   const navigate = useNavigate();
   const { showOnboarding, completeOnboarding } = useOnboarding();
   const { requestPermission, isEnabled: notificationsEnabled } = usePushNotifications();
+  const { downloadedTracks } = useDownload();
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   // Request notification permission after onboarding
   useEffect(() => {
@@ -52,6 +56,19 @@ const Index = () => {
       return () => clearTimeout(timer);
     }
   }, [showOnboarding, user, notificationsEnabled, requestPermission]);
+
+  useEffect(() => {
+    const onOffline = () => setIsOffline(true);
+    const onOnline = () => setIsOffline(false);
+
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+
+    return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -92,12 +109,18 @@ const Index = () => {
       <main className={cn("flex-1 overflow-hidden relative z-10", currentTrack && "pb-24")}>
         <div className="h-full overflow-y-auto px-4 pt-6 pb-24 safe-area-top">
           <AnimatePresence mode="wait">
-            {activeTab === 'home' && <HomeView key="home" setActiveTab={setActiveTab} />}
-            {activeTab === 'search' && <SearchView key="search" />}
-            {activeTab === 'library' && <LibraryView key="library" />}
-            {activeTab === 'stats' && <StatsPage key="stats" />}
-            {activeTab === 'settings' && <SettingsPage key="settings" />}
-            {activeTab === 'contact' && <ContactPage key="contact" />}
+            {isOffline ? (
+              <OfflineModeView key="offline" tracks={downloadedTracks} />
+            ) : (
+              <>
+                {activeTab === 'home' && <HomeView key="home" setActiveTab={setActiveTab} />}
+                {activeTab === 'search' && <SearchView key="search" />}
+                {activeTab === 'library' && <LibraryView key="library" />}
+                {activeTab === 'stats' && <StatsPage key="stats" />}
+                {activeTab === 'settings' && <SettingsPage key="settings" />}
+                {activeTab === 'contact' && <ContactPage key="contact" />}
+              </>
+            )}
           </AnimatePresence>
         </div>
       </main>
@@ -165,11 +188,8 @@ const HomeView = ({ setActiveTab }: { setActiveTab: (tab: Tab) => void }) => {
   // Search and play function for smart shuffle and artist albums
   const searchAndPlay = useCallback(async (query: string): Promise<Track[]> => {
     try {
-      const { data, error } = await supabase.functions.invoke('youtube-search', {
-        body: { query },
-      });
-      if (error) throw error;
-      return data.results || [];
+      const data = await searchMusicCatalog(query);
+      return data.songs || [];
     } catch (error) {
       console.error('Search error:', error);
       return [];

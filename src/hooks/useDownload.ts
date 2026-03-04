@@ -45,9 +45,9 @@ export const useDownload = () => {
     return isTrackDownloaded(videoId);
   }, []);
 
-  const downloadTrack = useCallback(async (track: Track): Promise<boolean> => {
+  const downloadTrack = useCallback(async (track: Track, silent = false): Promise<boolean> => {
     if (!user) {
-      toast.error('Sign in to download songs');
+      if (!silent) toast.error('Sign in to download songs');
       return false;
     }
 
@@ -67,29 +67,11 @@ export const useDownload = () => {
     try {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
       
-      const toastId = toast.loading(`Downloading "${track.title}"...`);
+      const toastId = silent ? null : toast.loading(`Downloading "${track.title}"...`);
 
-      // Get audio URL from edge function
-      const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-        body: { 
-          videoId: track.videoId,
-          title: track.title,
-          artist: track.artist,
-        },
-      });
+      // Use local server offline endpoint directly
+      const audioUrl = `http://localhost:3001/offline/download/${track.videoId}`;
 
-      if (error || !data?.success) {
-        toast.dismiss(toastId);
-        throw new Error(data?.error || 'Could not get audio stream');
-      }
-
-      // Use the direct URL for download (proxied URL may have issues)
-      const audioUrl = data.directUrl || data.audioUrl;
-      
-      if (!audioUrl) {
-        toast.dismiss(toastId);
-        throw new Error('No audio URL available');
-      }
 
       // Download and save to IndexedDB with progress
       const success = await saveToIndexedDB(
@@ -100,7 +82,7 @@ export const useDownload = () => {
         }
       );
 
-      toast.dismiss(toastId);
+      if (toastId) if (toastId) toast.dismiss(toastId);
 
       if (success) {
         // Save to database for sync across devices
@@ -118,14 +100,14 @@ export const useDownload = () => {
         }
 
         await loadDownloadedTracks();
-        toast.success(`"${track.title}" downloaded!`);
+        if (!silent) toast.success(`"${track.title}" downloaded!`);
         return true;
       } else {
         throw new Error('Failed to save to device');
       }
     } catch (error) {
       console.error('Download error:', error);
-      toast.error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (!silent) toast.error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
     } finally {
       setDownloading(prev => {
