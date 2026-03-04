@@ -67,7 +67,7 @@ export const useDownload = () => {
     try {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
       
-      const toastId = toast.loading(`Downloading "${track.title}"...`);
+      const toastId = silent ? null : toast.loading(`Downloading "${track.title}"...`);
 
       // Use local server offline endpoint directly
       const audioUrl = `http://localhost:3001/offline/download/${track.videoId}`;
