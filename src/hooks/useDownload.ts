@@ -45,9 +45,9 @@ export const useDownload = () => {
     return isTrackDownloaded(videoId);
   }, []);
 
-  const downloadTrack = useCallback(async (track: Track): Promise<boolean> => {
+  const downloadTrack = useCallback(async (track: Track, silent = false): Promise<boolean> => {
     if (!user) {
-      toast.error('Sign in to download songs');
+      if (!silent) toast.error('Sign in to download songs');
       return false;
     }
 
