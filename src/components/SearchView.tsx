@@ -158,7 +158,7 @@ export const SearchView = () => {
                     {results.artists.map((artist) => (
                       <button
                         key={artist.id}
-                        onClick={() => navigate(`/artist/${artist.id}`)}
+                        onClick={() => navigate(`/artist/${artist.id}?name=${encodeURIComponent(artist.name)}`)}
                         className="w-full text-left flex items-center gap-3 p-3 rounded-xl bg-muted/40 hover:bg-muted/70 transition-colors"
                       >
                         {artist.image ? (

@@ -19,7 +19,9 @@ const ArtistProfile = () => {
     const load = async () => {
       try {
         setLoading(true);
-        const data = await getArtistProfile(artistId);
+        const params = new URLSearchParams(window.location.search);
+        const artistName = params.get('name') || undefined;
+        const data = await getArtistProfile(artistId, artistName);
         if (!cancelled) setProfile(data);
       } catch (error) {
         toast.error('Failed to load artist profile');
