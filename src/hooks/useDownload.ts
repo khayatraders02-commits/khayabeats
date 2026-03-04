@@ -107,7 +107,7 @@ export const useDownload = () => {
       }
     } catch (error) {
       console.error('Download error:', error);
-      toast.error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (!silent) toast.error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
     } finally {
       setDownloading(prev => {
