@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Play, Loader2, Music2 } from 'lucide-react';
 import { usePlayer } from '@/contexts/PlayerContext';
 import { Track } from '@/types/music';
-import { supabase } from '@/integrations/supabase/client';
 import { TrackCard } from '@/components/TrackCard';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { searchMusicCatalog } from '@/lib/localMusicApi';
 
 interface Genre {
   id: string;

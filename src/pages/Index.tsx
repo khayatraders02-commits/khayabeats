@@ -30,6 +30,8 @@ import { toast } from 'sonner';
 import { NowPlayingBubble } from '@/components/NowPlayingBubble';
 import { CuratedPlaylistsSection, FeaturedArtistsSection, GenreGridSection } from '@/components/GenreCards';
 import { ServerStatusBanner, ServerStatusIndicator } from '@/components/ServerStatusBanner';
+import { OfflineModeView } from '@/components/OfflineModeView';
+import { searchMusicCatalog } from '@/lib/localMusicApi';
 
 type Tab = 'home' | 'search' | 'library' | 'stats' | 'settings' | 'contact';
 
