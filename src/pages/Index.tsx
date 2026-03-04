@@ -43,6 +43,8 @@ const Index = () => {
   const navigate = useNavigate();
   const { showOnboarding, completeOnboarding } = useOnboarding();
   const { requestPermission, isEnabled: notificationsEnabled } = usePushNotifications();
+  const { downloadedTracks } = useDownload();
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   // Request notification permission after onboarding
   useEffect(() => {
@@ -54,6 +56,19 @@ const Index = () => {
       return () => clearTimeout(timer);
     }
   }, [showOnboarding, user, notificationsEnabled, requestPermission]);
+
+  useEffect(() => {
+    const onOffline = () => setIsOffline(true);
+    const onOnline = () => setIsOffline(false);
+
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+
+    return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
+  }, []);
 
   if (loading) {
     return (
