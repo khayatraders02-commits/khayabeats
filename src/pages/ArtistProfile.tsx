@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 const ArtistProfile = () => {
   const { artistId = '' } = useParams();
   const navigate = useNavigate();
-  const { play } = usePlayer();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any>(null);
 
@@ -23,7 +22,7 @@ const ArtistProfile = () => {
         const artistName = params.get('name') || undefined;
         const data = await getArtistProfile(artistId, artistName);
         if (!cancelled) setProfile(data);
-      } catch (error) {
+      } catch {
         toast.error('Failed to load artist profile');
       } finally {
         if (!cancelled) setLoading(false);
@@ -85,14 +84,7 @@ const ArtistProfile = () => {
         <h2 className="text-lg font-bold mb-3">Top Songs</h2>
         <div className="space-y-1">
           {profile.topSongs.map((track: any, index: number) => (
-            <TrackCard
-              key={track.videoId}
-              track={track}
-              index={index}
-              queue={profile.topSongs}
-              showIndex
-              compact
-            />
+            <TrackCard key={track.videoId} track={track} index={index} queue={profile.topSongs} showIndex compact />
           ))}
         </div>
       </section>
