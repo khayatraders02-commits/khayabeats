@@ -82,7 +82,7 @@ export const useDownload = () => {
         }
       );
 
-      toast.dismiss(toastId);
+      if (toastId) toast.dismiss(toastId);
 
       if (success) {
         // Save to database for sync across devices
