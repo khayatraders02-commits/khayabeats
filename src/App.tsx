@@ -22,9 +22,11 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <BackgroundAudioManager />
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Index />} />
+              <Route path="/artist/:artistId" element={<ArtistProfile />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy" element={<PrivacyPage />} />
