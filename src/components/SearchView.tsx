@@ -127,7 +127,7 @@ export const SearchView = () => {
             className="pl-12 pr-10 h-12 rounded-full bg-muted border-none text-base"
           />
           {query && (
-            <button
+                      <button
               onClick={() => setQuery('')}
               className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >

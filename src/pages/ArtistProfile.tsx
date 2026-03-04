@@ -4,7 +4,6 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import { getArtistProfile } from '@/lib/localMusicApi';
 import { TrackCard, AlbumCard } from '@/components/TrackCard';
 import { Button } from '@/components/ui/button';
-import { usePlayer } from '@/contexts/PlayerContext';
 import { toast } from 'sonner';
 
 const ArtistProfile = () => {
