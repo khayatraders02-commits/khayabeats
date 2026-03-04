@@ -245,14 +245,10 @@ export const GenreCards = () => {
     
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('youtube-search', {
-        body: { query: genre.searchTerms[0] },
-      });
+      const data = await searchMusicCatalog(genre.searchTerms[0]);
 
-      if (error) throw error;
-      
-      if (data.results && data.results.length > 0) {
-        play(data.results[0], data.results);
+      if (data.songs && data.songs.length > 0) {
+        play(data.songs[0], data.songs);
         toast.success(`Playing ${genre.name} mix`);
       }
     } catch (error) {

@@ -188,11 +188,8 @@ const HomeView = ({ setActiveTab }: { setActiveTab: (tab: Tab) => void }) => {
   // Search and play function for smart shuffle and artist albums
   const searchAndPlay = useCallback(async (query: string): Promise<Track[]> => {
     try {
-      const { data, error } = await supabase.functions.invoke('youtube-search', {
-        body: { query },
-      });
-      if (error) throw error;
-      return data.results || [];
+      const data = await searchMusicCatalog(query);
+      return data.songs || [];
     } catch (error) {
       console.error('Search error:', error);
       return [];
