@@ -109,12 +109,18 @@ const Index = () => {
       <main className={cn("flex-1 overflow-hidden relative z-10", currentTrack && "pb-24")}>
         <div className="h-full overflow-y-auto px-4 pt-6 pb-24 safe-area-top">
           <AnimatePresence mode="wait">
-            {activeTab === 'home' && <HomeView key="home" setActiveTab={setActiveTab} />}
-            {activeTab === 'search' && <SearchView key="search" />}
-            {activeTab === 'library' && <LibraryView key="library" />}
-            {activeTab === 'stats' && <StatsPage key="stats" />}
-            {activeTab === 'settings' && <SettingsPage key="settings" />}
-            {activeTab === 'contact' && <ContactPage key="contact" />}
+            {isOffline ? (
+              <OfflineModeView key="offline" tracks={downloadedTracks} />
+            ) : (
+              <>
+                {activeTab === 'home' && <HomeView key="home" setActiveTab={setActiveTab} />}
+                {activeTab === 'search' && <SearchView key="search" />}
+                {activeTab === 'library' && <LibraryView key="library" />}
+                {activeTab === 'stats' && <StatsPage key="stats" />}
+                {activeTab === 'settings' && <SettingsPage key="settings" />}
+                {activeTab === 'contact' && <ContactPage key="contact" />}
+              </>
+            )}
           </AnimatePresence>
         </div>
       </main>
