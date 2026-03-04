@@ -78,7 +78,7 @@ export const downloadTrack = async (
       }
     }
 
-    const audioBlob = new Blob(chunks as BlobPart[], { type: 'audio/mpeg' });
+    const audioBlob = new Blob(chunks as BlobPart[], { type: response.headers.get('content-type') || 'audio/mpeg' });
 
     // Store in IndexedDB
     const downloadedTrack: DownloadedTrack = {

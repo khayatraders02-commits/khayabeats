@@ -69,27 +69,9 @@ export const useDownload = () => {
       
       const toastId = toast.loading(`Downloading "${track.title}"...`);
 
-      // Get audio URL from edge function
-      const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-        body: { 
-          videoId: track.videoId,
-          title: track.title,
-          artist: track.artist,
-        },
-      });
+      // Use local server offline endpoint directly
+      const audioUrl = `http://localhost:3001/offline/download/${track.videoId}`;
 
-      if (error || !data?.success) {
-        toast.dismiss(toastId);
-        throw new Error(data?.error || 'Could not get audio stream');
-      }
-
-      // Use the direct URL for download (proxied URL may have issues)
-      const audioUrl = data.directUrl || data.audioUrl;
-      
-      if (!audioUrl) {
-        toast.dismiss(toastId);
-        throw new Error('No audio URL available');
-      }
 
       // Download and save to IndexedDB with progress
       const success = await saveToIndexedDB(
