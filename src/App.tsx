@@ -8,8 +8,10 @@ import { PlayerProvider } from "@/contexts/PlayerContext";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import ArtistProfile from "./pages/ArtistProfile";
 import { TermsPage, PrivacyPage } from "./components/LegalPages";
 import { ContactPage } from "./components/ContactPage";
+import { BackgroundAudioManager } from "./components/BackgroundAudioManager";
 
 const queryClient = new QueryClient();
 
