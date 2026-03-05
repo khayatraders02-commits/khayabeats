@@ -12,6 +12,8 @@ import ArtistProfile from "./pages/ArtistProfile";
 import { TermsPage, PrivacyPage } from "./components/LegalPages";
 import { ContactPage } from "./components/ContactPage";
 import { BackgroundAudioManager } from "./components/BackgroundAudioManager";
+import { MediaSessionManager } from "./components/MediaSessionManager";
+import { AutoBackupManager } from "./components/AutoBackupManager";
 
 const queryClient = new QueryClient();
 
@@ -23,6 +25,8 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BackgroundAudioManager />
+          <MediaSessionManager />
+          <AutoBackupManager />
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Index />} />
