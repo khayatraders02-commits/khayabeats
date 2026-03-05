@@ -1,4 +1,5 @@
 import { Track } from '@/types/music';
+import { supabase } from '@/integrations/supabase/client';
 
 const LOCAL_SERVER_URL = 'http://localhost:3001';
 
@@ -149,14 +150,45 @@ const fetchITunesAlbums = async (query: string): Promise<AlbumSearchResult[]> =>
   }
 };
 
-export const searchMusicCatalog = async (query: string): Promise<SearchCatalogResponse> => {
-  const res = await withTimeout(`${LOCAL_SERVER_URL}/search?q=${encodeURIComponent(query)}&limit=60`);
-  if (!res.ok) throw new Error('Local server search failed');
+// Try local server search first, fall back to cloud edge function
+const searchSongs = async (query: string, limit = 60): Promise<Track[]> => {
+  // Try local server first
+  try {
+    const res = await fetch(`${LOCAL_SERVER_URL}/search?q=${encodeURIComponent(query)}&limit=${limit}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return (data.results || data.songs || []).map(mapTrack);
+    }
+  } catch {
+    console.log('[Search] Local server offline, using cloud...');
+  }
 
-  const data = await res.json();
-  const songs = rankTracks(query, (data.results || data.songs || []).map(mapTrack)).slice(0, 30);
-  const artists = (data.artists && data.artists.length > 0 ? data.artists : deriveArtists(songs)).slice(0, 5);
-  const albums = data.albums && data.albums.length > 0 ? data.albums : await fetchITunesAlbums(query);
+  // Fallback to cloud edge function
+  try {
+    const { data, error } = await supabase.functions.invoke('youtube-search', {
+      body: { query, maxResults: limit },
+    });
+
+    if (error) throw error;
+    return (data?.results || []).map(mapTrack);
+  } catch (e) {
+    console.error('[Search] Cloud search also failed:', e);
+    return [];
+  }
+};
+
+export const searchMusicCatalog = async (query: string): Promise<SearchCatalogResponse> => {
+  const rawTracks = await searchSongs(query);
+  
+  if (rawTracks.length === 0) {
+    return { artists: [], songs: [], albums: [] };
+  }
+
+  const songs = rankTracks(query, rawTracks).slice(0, 30);
+  const artists = deriveArtists(songs).slice(0, 5);
+  const albums = await fetchITunesAlbums(query);
 
   return { artists, songs, albums };
 };

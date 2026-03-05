@@ -1,31 +1,31 @@
 import { useEffect } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
-import { BackgroundMode } from '@anuradev/capacitor-background-mode';
 import { usePlayer } from '@/contexts/PlayerContext';
 
 export const useBackgroundAudio = () => {
   const { isPlaying, currentTrack } = usePlayer();
 
   useEffect(() => {
-    if (Capacitor.getPlatform() !== 'android') return;
+    if (!Capacitor.isNativePlatform()) return;
 
     const setup = async () => {
       try {
+        const { BackgroundMode } = await (eval('import("@anuradev/capacitor-background-mode")') as Promise<any>);
         await BackgroundMode.enable({
           title: 'KhayaBeats',
           text: currentTrack ? `${currentTrack.title} • ${currentTrack.artist}` : 'Playing music',
           silent: false,
           resume: true,
           hidden: false,
-        } as any);
+        });
       } catch {
-        // plugin can fail in web preview; ignore
+        // Plugin not available in web
       }
     };
 
     const teardown = async () => {
       try {
+        const { BackgroundMode } = await (eval('import("@anuradev/capacitor-background-mode")') as Promise<any>);
         await BackgroundMode.disable();
       } catch {
         // ignore
@@ -40,30 +40,6 @@ export const useBackgroundAudio = () => {
 
     return () => {
       if (!isPlaying) teardown();
-    };
-  }, [isPlaying, currentTrack?.title, currentTrack?.artist]);
-
-  useEffect(() => {
-    if (Capacitor.getPlatform() !== 'android') return;
-
-    const listener = App.addListener('appStateChange', async ({ isActive }) => {
-      if (!isActive && isPlaying) {
-        try {
-          await BackgroundMode.enable({
-            title: 'KhayaBeats',
-            text: currentTrack ? `${currentTrack.title} • ${currentTrack.artist}` : 'Playing music',
-            silent: false,
-            resume: true,
-            hidden: false,
-          } as any);
-        } catch {
-          // ignore
-        }
-      }
-    });
-
-    return () => {
-      listener.then((l) => l.remove()).catch(() => undefined);
     };
   }, [isPlaying, currentTrack?.title, currentTrack?.artist]);
 };

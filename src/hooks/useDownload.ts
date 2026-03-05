@@ -11,9 +11,21 @@ import {
   getStorageUsage,
 } from '@/lib/offlineStorage';
 
+const LOCAL_SERVER_URL = 'http://localhost:3001';
+
 interface DownloadProgress {
   [videoId: string]: number;
 }
+
+// Check if local server is reachable
+const isLocalServerOnline = async (): Promise<boolean> => {
+  try {
+    const res = await fetch(`${LOCAL_SERVER_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
 
 export const useDownload = () => {
   const { user } = useAuth();
@@ -22,7 +34,6 @@ export const useDownload = () => {
   const [storageUsed, setStorageUsed] = useState(0);
   const loadedRef = useRef(false);
 
-  // Load downloaded tracks on mount
   useEffect(() => {
     if (!loadedRef.current) {
       loadedRef.current = true;
@@ -51,29 +62,44 @@ export const useDownload = () => {
       return false;
     }
 
-    // Check if already downloaded
     const alreadyDownloaded = await isTrackDownloaded(track.videoId);
     if (alreadyDownloaded) {
-      toast.info('Song already downloaded');
+      if (!silent) toast.info('Song already downloaded');
       return true;
     }
 
-    // Check if already downloading
     if (downloading[track.videoId] !== undefined) {
-      toast.info('Download already in progress');
+      if (!silent) toast.info('Download already in progress');
       return false;
     }
 
     try {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
-      
       const toastId = silent ? null : toast.loading(`Downloading "${track.title}"...`);
 
-      // Use local server offline endpoint directly
-      const audioUrl = `http://localhost:3001/offline/download/${track.videoId}`;
+      let audioUrl: string;
 
+      // Try local server first
+      const serverOnline = await isLocalServerOnline();
+      if (serverOnline) {
+        audioUrl = `${LOCAL_SERVER_URL}/offline/download/${track.videoId}`;
+      } else {
+        // Fallback: get audio URL from edge function then download the audio
+        const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+          body: {
+            videoId: track.videoId,
+            title: track.title,
+            artist: track.artist,
+          },
+        });
 
-      // Download and save to IndexedDB with progress
+        if (error || !data?.success || !data?.audioUrl) {
+          throw new Error('Could not get audio source for download');
+        }
+
+        audioUrl = data.audioUrl;
+      }
+
       const success = await saveToIndexedDB(
         track,
         audioUrl,
@@ -82,10 +108,9 @@ export const useDownload = () => {
         }
       );
 
-      if (toastId) if (toastId) toast.dismiss(toastId);
+      if (toastId) toast.dismiss(toastId);
 
       if (success) {
-        // Save to database for sync across devices
         try {
           await supabase.from('downloads').upsert({
             user_id: user.id,
@@ -121,7 +146,7 @@ export const useDownload = () => {
   const removeDownload = useCallback(async (videoId: string): Promise<boolean> => {
     try {
       const success = await deleteDownloadedTrack(videoId);
-      
+
       if (success && user) {
         await supabase
           .from('downloads')
