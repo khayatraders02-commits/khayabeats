@@ -39,34 +39,20 @@ export interface ArtistProfileResponse {
 }
 
 const JUNK_PATTERNS = [
-  /slowed/i,
-  /sped\s*up/i,
-  /remix/i,
-  /cover/i,
-  /live/i,
-  /reaction/i,
-  /instrumental/i,
-  /karaoke/i,
-  /8d/i,
-  /fan\s*made/i,
-  /nightcore/i,
+  /slowed/i, /sped\s*up/i, /remix/i, /cover/i, /\blive\b/i,
+  /reaction/i, /instrumental/i, /karaoke/i, /\b8d\b/i,
+  /fan\s*made/i, /nightcore/i,
 ];
 
 const STOP_WORDS = new Set(['official', 'audio', 'video', 'lyrics', 'song', 'music', 'the', 'a', 'an', 'and', '&']);
 
 const toSlug = (value: string) =>
-  value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
+  value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 const fromSlug = (slug: string) => slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 const normalizeTitle = (title: string) =>
-  title
-    .toLowerCase()
+  title.toLowerCase()
     .replace(/\(official[^)]*\)/gi, '')
     .replace(/\[(official|lyrics?|hd|4k|audio|video)[^\]]*\]/gi, '')
     .replace(/[–—-]/g, ' ')
@@ -75,10 +61,7 @@ const normalizeTitle = (title: string) =>
     .trim();
 
 const significantWords = (query: string) =>
-  query
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
+  query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 
 const mapTrack = (item: any): Track => ({
@@ -150,52 +133,77 @@ const fetchITunesAlbums = async (query: string): Promise<AlbumSearchResult[]> =>
   }
 };
 
-// Try local server search first, fall back to cloud edge function
-const searchSongs = async (query: string, limit = 60): Promise<Track[]> => {
-  // Try local server first
+/**
+ * Try local server grouped search first, fall back to cloud
+ */
+export const searchMusicCatalog = async (query: string): Promise<SearchCatalogResponse> => {
+  // Try local server first (returns grouped data natively)
   try {
-    const res = await fetch(`${LOCAL_SERVER_URL}/search?q=${encodeURIComponent(query)}&limit=${limit}`, {
+    const res = await fetch(`${LOCAL_SERVER_URL}/search?q=${encodeURIComponent(query)}&limit=60`, {
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) {
       const data = await res.json();
-      return (data.results || data.songs || []).map(mapTrack);
+      // Server v2 returns { artists, songs, albums } directly
+      if (data.artists && data.songs) {
+        return {
+          artists: data.artists || [],
+          songs: (data.songs || []).map(mapTrack),
+          albums: data.albums || [],
+        };
+      }
+      // Legacy format: { results: [...] }
+      const rawTracks = (data.results || []).map(mapTrack);
+      const songs = rankTracks(query, rawTracks).slice(0, 30);
+      const artists = deriveArtists(songs);
+      const albums = await fetchITunesAlbums(query);
+      return { artists, songs, albums };
     }
   } catch {
     console.log('[Search] Local server offline, using cloud...');
   }
 
-  // Fallback to cloud edge function
+  // Cloud fallback
   try {
     const { data, error } = await supabase.functions.invoke('youtube-search', {
-      body: { query, maxResults: limit },
+      body: { query, maxResults: 60 },
     });
-
     if (error) throw error;
-    return (data?.results || []).map(mapTrack);
+    const rawTracks = (data?.results || []).map(mapTrack);
+    if (rawTracks.length === 0) return { artists: [], songs: [], albums: [] };
+    const songs = rankTracks(query, rawTracks).slice(0, 30);
+    const artists = deriveArtists(songs);
+    const albums = await fetchITunesAlbums(query);
+    return { artists, songs, albums };
   } catch (e) {
     console.error('[Search] Cloud search also failed:', e);
-    return [];
-  }
-};
-
-export const searchMusicCatalog = async (query: string): Promise<SearchCatalogResponse> => {
-  const rawTracks = await searchSongs(query);
-  
-  if (rawTracks.length === 0) {
     return { artists: [], songs: [], albums: [] };
   }
-
-  const songs = rankTracks(query, rawTracks).slice(0, 30);
-  const artists = deriveArtists(songs).slice(0, 5);
-  const albums = await fetchITunesAlbums(query);
-
-  return { artists, songs, albums };
 };
 
+/**
+ * Get artist profile - try local server first, fallback to client-side assembly
+ */
 export const getArtistProfile = async (artistId: string, artistNameHint?: string): Promise<ArtistProfileResponse> => {
   const artistName = artistNameHint || fromSlug(artistId);
 
+  // Try local server first
+  try {
+    const res = await fetch(`${LOCAL_SERVER_URL}/artists/${artistId}?name=${encodeURIComponent(artistName)}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        ...data,
+        topSongs: (data.topSongs || []).map(mapTrack),
+      };
+    }
+  } catch {
+    console.log('[ArtistProfile] Local server offline, assembling client-side...');
+  }
+
+  // Client-side fallback
   const [songsData, artistRes, albumsRes] = await Promise.all([
     searchMusicCatalog(`${artistName} official songs`),
     withTimeout(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=musicArtist&limit=1`, 12000).catch(() => null),
@@ -222,7 +230,7 @@ export const getArtistProfile = async (artistId: string, artistNameHint?: string
     name: artist?.artistName || artistName,
     image: songsData.songs[0]?.thumbnailUrl,
     bannerImage: songsData.songs[0]?.thumbnailUrl,
-    bio: artist ? `${artist.artistName} profile generated from live catalog data.` : `${artistName} profile generated from live catalog data.`,
+    bio: artist ? `${artist.artistName} is a ${artist.primaryGenreName || ''} artist.` : `${artistName} profile generated from live catalog data.`,
     genres: artist?.primaryGenreName ? [artist.primaryGenreName] : [],
     monthlyListeners: Math.floor((songsData.songs.length || 1) * 125000),
     topSongs: songsData.songs.filter((s) => s.artist.toLowerCase().includes(artistName.toLowerCase().split(' ')[0])).slice(0, 20),
