@@ -1,16 +1,35 @@
 import { useEffect } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
-import { BackgroundMode } from '@anuradev/capacitor-background-mode';
 import { usePlayer } from '@/contexts/PlayerContext';
 
 export const useBackgroundAudio = () => {
   const { isPlaying, currentTrack } = usePlayer();
 
   useEffect(() => {
-    if (Capacitor.getPlatform() !== 'android') return;
+    if (!Capacitor.isNativePlatform()) return;
+
+    let BackgroundMode: any = null;
+    let AppPlugin: any = null;
+
+    const loadPlugins = async () => {
+      try {
+        const bgModule = await import('@anuradev/capacitor-background-mode');
+        BackgroundMode = bgModule.BackgroundMode;
+      } catch {
+        // Plugin not available in web
+      }
+      try {
+        const appModule = await import('@capacitor/app');
+        AppPlugin = appModule.App;
+      } catch {
+        // Plugin not available
+      }
+    };
 
     const setup = async () => {
+      await loadPlugins();
+      if (!BackgroundMode) return;
+
       try {
         await BackgroundMode.enable({
           title: 'KhayaBeats',
@@ -20,11 +39,12 @@ export const useBackgroundAudio = () => {
           hidden: false,
         } as any);
       } catch {
-        // plugin can fail in web preview; ignore
+        // ignore
       }
     };
 
     const teardown = async () => {
+      if (!BackgroundMode) return;
       try {
         await BackgroundMode.disable();
       } catch {
@@ -44,26 +64,41 @@ export const useBackgroundAudio = () => {
   }, [isPlaying, currentTrack?.title, currentTrack?.artist]);
 
   useEffect(() => {
-    if (Capacitor.getPlatform() !== 'android') return;
+    if (!Capacitor.isNativePlatform()) return;
 
-    const listener = App.addListener('appStateChange', async ({ isActive }) => {
-      if (!isActive && isPlaying) {
-        try {
-          await BackgroundMode.enable({
-            title: 'KhayaBeats',
-            text: currentTrack ? `${currentTrack.title} • ${currentTrack.artist}` : 'Playing music',
-            silent: false,
-            resume: true,
-            hidden: false,
-          } as any);
-        } catch {
-          // ignore
-        }
+    let cleanup: (() => void) | null = null;
+
+    const setupListener = async () => {
+      try {
+        const { App } = await import('@capacitor/app');
+        const { BackgroundMode } = await import('@anuradev/capacitor-background-mode');
+
+        const listener = await App.addListener('appStateChange', async ({ isActive }) => {
+          if (!isActive && isPlaying) {
+            try {
+              await BackgroundMode.enable({
+                title: 'KhayaBeats',
+                text: currentTrack ? `${currentTrack.title} • ${currentTrack.artist}` : 'Playing music',
+                silent: false,
+                resume: true,
+                hidden: false,
+              } as any);
+            } catch {
+              // ignore
+            }
+          }
+        });
+
+        cleanup = () => listener.remove();
+      } catch {
+        // Plugins not available in web
       }
-    });
+    };
+
+    setupListener();
 
     return () => {
-      listener.then((l) => l.remove()).catch(() => undefined);
+      cleanup?.();
     };
   }, [isPlaying, currentTrack?.title, currentTrack?.artist]);
 };
