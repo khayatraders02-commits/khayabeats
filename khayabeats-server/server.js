@@ -250,6 +250,14 @@ async function fetchITunesArtist(name) {
   }
 }
 
+function formatDurationMs(ms) {
+  if (!ms || Number.isNaN(ms)) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
 // ==================== ROUTES ====================
 
 app.get('/', (req, res) => {
