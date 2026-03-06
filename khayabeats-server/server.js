@@ -278,13 +278,33 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  let engine = { online: false };
+
+  try {
+    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      engine = {
+        online: true,
+        server: data.server,
+        queue: data?.stats?.currentQueue ?? 0,
+      };
+    }
+  } catch {
+    engine = { online: false };
+  }
+
   res.json({
     status: 'ok',
     server: 'khayabeats-api',
     version: '2.0.0',
     uptime: process.uptime(),
     cache: getCacheStats(),
+    engine,
   });
 });
 
