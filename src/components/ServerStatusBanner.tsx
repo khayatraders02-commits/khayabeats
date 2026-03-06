@@ -4,7 +4,7 @@ import { useServerStatus } from '@/hooks/useServerStatus';
 import { cn } from '@/lib/utils';
 
 export const ServerStatusBanner = () => {
-  const { isOnline, isChecking, checkServerHealth } = useServerStatus();
+  const { isOnline, isChecking, checkServerHealth, isReachableFromClient, reason } = useServerStatus();
 
   return (
     <AnimatePresence>
@@ -17,15 +17,21 @@ export const ServerStatusBanner = () => {
         >
           <div className="flex items-center gap-2">
             <ServerOff size={16} className="text-destructive" />
-            <span className="text-sm font-medium text-destructive">Server Offline</span>
+            <span className="text-sm font-medium text-destructive">
+              {isReachableFromClient ? 'Server Offline' : 'Local server unavailable in Cloud preview'}
+            </span>
           </div>
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={checkServerHealth}
-            className="p-1.5 rounded-full hover:bg-background/50 transition-colors"
-          >
-            <RefreshCw size={14} className="text-muted-foreground" />
-          </motion.button>
+          {isReachableFromClient ? (
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={checkServerHealth}
+              className="p-1.5 rounded-full hover:bg-background/50 transition-colors"
+            >
+              <RefreshCw size={14} className="text-muted-foreground" />
+            </motion.button>
+          ) : (
+            <span className="text-xs text-muted-foreground">{reason}</span>
+          )}
         </motion.div>
       )}
     </AnimatePresence>
@@ -33,15 +39,13 @@ export const ServerStatusBanner = () => {
 };
 
 export const ServerStatusIndicator = () => {
-  const { isOnline, isChecking, cacheStats } = useServerStatus();
+  const { isOnline, isChecking, cacheStats, isReachableFromClient } = useServerStatus();
 
   return (
     <motion.div
       className={cn(
-        "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium",
-        isOnline 
-          ? "bg-primary/10 text-primary" 
-          : "bg-destructive/10 text-destructive"
+        'flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium',
+        isOnline ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'
       )}
     >
       {isChecking ? (
@@ -61,16 +65,12 @@ export const ServerStatusIndicator = () => {
             transition={{ duration: 2, repeat: Infinity }}
           />
           <span>Online</span>
-          {cacheStats && cacheStats.totalFiles > 0 && (
-            <span className="text-muted-foreground ml-1">
-              • {cacheStats.totalFiles}
-            </span>
-          )}
+          {cacheStats && cacheStats.totalFiles > 0 && <span className="text-muted-foreground ml-1">• {cacheStats.totalFiles}</span>}
         </>
       ) : (
         <>
           <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
-          <span>Offline</span>
+          <span>{isReachableFromClient ? 'Offline' : 'Preview mode'}</span>
         </>
       )}
     </motion.div>

@@ -3,6 +3,19 @@ import { useState, useEffect, useCallback } from 'react';
 // Default server URL - runs on user's local PC
 const DEFAULT_SERVER_URL = 'http://localhost:3001';
 
+const canUseLocalServerFromCurrentClient = () => {
+  if (typeof window === 'undefined') return true;
+
+  const host = window.location.hostname;
+  const protocol = window.location.protocol;
+
+  if (protocol === 'file:') return true;
+  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return true;
+
+  // Cloud previews cannot reach the user's localhost machine.
+  return false;
+};
+
 interface ServerStatus {
   isOnline: boolean;
   isChecking: boolean;
@@ -12,6 +25,8 @@ interface ServerStatus {
     totalFiles: number;
     totalSizeMB: number;
   } | null;
+  isReachableFromClient: boolean;
+  reason: string | null;
 }
 
 export const useServerStatus = () => {
@@ -21,10 +36,25 @@ export const useServerStatus = () => {
     serverUrl: DEFAULT_SERVER_URL,
     lastChecked: null,
     cacheStats: null,
+    isReachableFromClient: true,
+    reason: null,
   });
 
   const checkServerHealth = useCallback(async () => {
-    setStatus(prev => ({ ...prev, isChecking: true }));
+    if (!canUseLocalServerFromCurrentClient()) {
+      setStatus((prev) => ({
+        ...prev,
+        isOnline: false,
+        isChecking: false,
+        lastChecked: new Date(),
+        cacheStats: null,
+        isReachableFromClient: false,
+        reason: 'Local server is only reachable when the app runs on your own device.',
+      }));
+      return false;
+    }
+
+    setStatus((prev) => ({ ...prev, isChecking: true, isReachableFromClient: true, reason: null }));
 
     try {
       const controller = new AbortController();
@@ -37,26 +67,30 @@ export const useServerStatus = () => {
 
       clearTimeout(timeoutId);
 
-      if (response.ok) {
-        const data = await response.json();
-        setStatus({
-          isOnline: true,
-          isChecking: false,
-          serverUrl: DEFAULT_SERVER_URL,
-          lastChecked: new Date(),
-          cacheStats: data.cache || null,
-        });
-        return true;
-      } else {
+      if (!response.ok) {
         throw new Error('Server not healthy');
       }
-    } catch (error) {
-      setStatus(prev => ({
+
+      const data = await response.json();
+      setStatus({
+        isOnline: true,
+        isChecking: false,
+        serverUrl: DEFAULT_SERVER_URL,
+        lastChecked: new Date(),
+        cacheStats: data.cache || null,
+        isReachableFromClient: true,
+        reason: null,
+      });
+      return true;
+    } catch {
+      setStatus((prev) => ({
         ...prev,
         isOnline: false,
         isChecking: false,
         lastChecked: new Date(),
         cacheStats: null,
+        isReachableFromClient: true,
+        reason: null,
       }));
       return false;
     }

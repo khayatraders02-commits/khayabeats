@@ -250,6 +250,14 @@ async function fetchITunesArtist(name) {
   }
 }
 
+function formatDurationMs(ms) {
+  if (!ms || Number.isNaN(ms)) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
 // ==================== ROUTES ====================
 
 app.get('/', (req, res) => {
@@ -263,19 +271,40 @@ app.get('/', (req, res) => {
       'POST /audio-url',
       'GET  /search?q=',
       'GET  /artists/:id',
+      'GET  /albums/:id',
       'GET  /offline/download/:videoId',
       'GET  /cache/stats',
     ],
   });
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  let engine = { online: false };
+
+  try {
+    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      engine = {
+        online: true,
+        server: data.server,
+        queue: data?.stats?.currentQueue ?? 0,
+      };
+    }
+  } catch {
+    engine = { online: false };
+  }
+
   res.json({
     status: 'ok',
     server: 'khayabeats-api',
     version: '2.0.0',
     uptime: process.uptime(),
     cache: getCacheStats(),
+    engine,
   });
 });
 
@@ -477,6 +506,60 @@ app.get('/artists/:artistId', async (req, res) => {
 });
 
 /**
+ * ALBUM PROFILE: Returns album metadata + full tracklist
+ * GET /albums/:albumId?title=<title>&artist=<artist>
+ */
+app.get('/albums/:albumId', async (req, res) => {
+  const { albumId } = req.params;
+  const titleHint = req.query.title;
+  const artistHint = req.query.artist;
+
+  try {
+    let lookup = await fetch(`${CONFIG.ITUNES_API}/lookup?id=${encodeURIComponent(albumId)}&entity=song`);
+    let data = lookup.ok ? await lookup.json() : { results: [] };
+
+    if ((!data.results || data.results.length === 0) && titleHint) {
+      const query = `${titleHint} ${artistHint || ''}`.trim();
+      const search = await fetch(`${CONFIG.ITUNES_API}/search?term=${encodeURIComponent(query)}&entity=album&limit=1`);
+      const searchData = search.ok ? await search.json() : { results: [] };
+      const match = searchData.results?.[0];
+
+      if (match?.collectionId) {
+        lookup = await fetch(`${CONFIG.ITUNES_API}/lookup?id=${encodeURIComponent(match.collectionId)}&entity=song`);
+        data = lookup.ok ? await lookup.json() : { results: [] };
+      }
+    }
+
+    const collection = (data.results || []).find((item) => item.wrapperType === 'collection');
+    const tracks = (data.results || [])
+      .filter((item) => item.wrapperType === 'track')
+      .map((track) => ({
+        id: String(track.trackId),
+        title: track.trackName,
+        artist: track.artistName,
+        duration: formatDurationMs(track.trackTimeMillis),
+        trackNumber: track.trackNumber,
+      }));
+
+    if (!collection && tracks.length === 0) {
+      return res.status(404).json({ error: 'Album not found' });
+    }
+
+    return res.json({
+      id: String(collection?.collectionId || albumId),
+      title: collection?.collectionName || titleHint || 'Album',
+      artist: collection?.artistName || artistHint || 'Unknown Artist',
+      coverImage: collection?.artworkUrl100?.replace('100x100bb', '600x600bb') || null,
+      releaseDate: collection?.releaseDate || null,
+      tracks,
+    });
+  } catch (error) {
+    console.error('[ALBUM ERROR]', error.message);
+    return res.status(500).json({ error: 'Failed to load album' });
+  }
+});
+
+/**
  * Download for offline
  */
 app.get('/offline/download/:videoId', async (req, res) => {
@@ -546,8 +629,8 @@ app.listen(PORT, () => {
 ║   • POST /audio-url     - Get stream URL               ║
 ║   • GET  /search?q=     - Grouped search               ║
 ║   • GET  /artists/:id   - Artist profile               ║
+║   • GET  /albums/:id    - Album profile + tracks       ║
 ║   • GET  /offline/download/:id - Download for offline  ║
-║   • GET  /cache/stats   - Cache statistics             ║
 ║                                                        ║
 ╚════════════════════════════════════════════════════════╝
   `);

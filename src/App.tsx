@@ -10,6 +10,7 @@ import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 import ArtistProfile from "./pages/ArtistProfile";
 import { TermsPage, PrivacyPage } from "./components/LegalPages";
+import AlbumProfile from "./pages/AlbumProfile";
 import { ContactPage } from "./components/ContactPage";
 import { BackgroundAudioManager } from "./components/BackgroundAudioManager";
 import { MediaSessionManager } from "./components/MediaSessionManager";
@@ -31,6 +32,7 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/artist/:artistId" element={<ArtistProfile />} />
+              <Route path="/album/:albumId" element={<AlbumProfile />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy" element={<PrivacyPage />} />

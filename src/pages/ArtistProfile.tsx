@@ -99,6 +99,11 @@ const ArtistProfile = () => {
                 title={album.title}
                 subtitle={album.releaseDate ? new Date(album.releaseDate).getFullYear().toString() : 'Album'}
                 imageUrl={album.coverImage || ''}
+                onClick={() =>
+                  navigate(
+                    `/album/${album.id}?title=${encodeURIComponent(album.title)}&artist=${encodeURIComponent(album.artist || profile.name)}`
+                  )
+                }
               />
             ))}
           </div>
@@ -117,6 +122,11 @@ const ArtistProfile = () => {
                 title={single.title}
                 subtitle={single.releaseDate ? new Date(single.releaseDate).getFullYear().toString() : 'Single'}
                 imageUrl={single.coverImage || ''}
+                onClick={() =>
+                  navigate(
+                    `/album/${single.id}?title=${encodeURIComponent(single.title)}&artist=${encodeURIComponent(single.artist || profile.name)}`
+                  )
+                }
               />
             ))}
           </div>
