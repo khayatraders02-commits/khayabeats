@@ -271,6 +271,7 @@ app.get('/', (req, res) => {
       'POST /audio-url',
       'GET  /search?q=',
       'GET  /artists/:id',
+      'GET  /albums/:id',
       'GET  /offline/download/:videoId',
       'GET  /cache/stats',
     ],
