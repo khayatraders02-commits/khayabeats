@@ -10,6 +10,7 @@ import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 import ArtistProfile from "./pages/ArtistProfile";
 import { TermsPage, PrivacyPage } from "./components/LegalPages";
+import AlbumProfile from "./pages/AlbumProfile";
 import { ContactPage } from "./components/ContactPage";
 import { BackgroundAudioManager } from "./components/BackgroundAudioManager";
 import { MediaSessionManager } from "./components/MediaSessionManager";

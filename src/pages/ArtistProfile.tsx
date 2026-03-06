@@ -99,6 +99,11 @@ const ArtistProfile = () => {
                 title={album.title}
                 subtitle={album.releaseDate ? new Date(album.releaseDate).getFullYear().toString() : 'Album'}
                 imageUrl={album.coverImage || ''}
+                onClick={() =>
+                  navigate(
+                    `/album/${album.id}?title=${encodeURIComponent(album.title)}&artist=${encodeURIComponent(album.artist || profile.name)}`
+                  )
+                }
               />
             ))}
           </div>
