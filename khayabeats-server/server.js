@@ -629,8 +629,8 @@ app.listen(PORT, () => {
 ║   • POST /audio-url     - Get stream URL               ║
 ║   • GET  /search?q=     - Grouped search               ║
 ║   • GET  /artists/:id   - Artist profile               ║
+║   • GET  /albums/:id    - Album profile + tracks       ║
 ║   • GET  /offline/download/:id - Download for offline  ║
-║   • GET  /cache/stats   - Cache statistics             ║
 ║                                                        ║
 ╚════════════════════════════════════════════════════════╝
   `);
