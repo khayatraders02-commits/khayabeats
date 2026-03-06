@@ -17,8 +17,20 @@ interface DownloadProgress {
   [videoId: string]: number;
 }
 
+const canUseLocalServerFromCurrentClient = () => {
+  if (typeof window === 'undefined') return true;
+
+  const host = window.location.hostname;
+  const protocol = window.location.protocol;
+
+  if (protocol === 'file:') return true;
+  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
+};
+
 // Check if local server is reachable
 const isLocalServerOnline = async (): Promise<boolean> => {
+  if (!canUseLocalServerFromCurrentClient()) return false;
+
   try {
     const res = await fetch(`${LOCAL_SERVER_URL}/health`, { signal: AbortSignal.timeout(3000) });
     return res.ok;

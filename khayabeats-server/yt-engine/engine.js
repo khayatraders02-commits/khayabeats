@@ -64,6 +64,18 @@ const downloadQueue = new Queue(async (task, cb) => {
 // ==================== ROUTES ====================
 
 /**
+ * Service info (for browser checks)
+ */
+app.get('/', (req, res) => {
+  res.json({
+    name: 'KhayaBeats YT Engine',
+    status: 'online',
+    version: '1.0.0',
+    endpoints: ['GET /health', 'POST /fetch', 'GET /search?q=', 'GET /queue'],
+  });
+});
+
+/**
  * Health check
  */
 app.get('/health', (req, res) => {

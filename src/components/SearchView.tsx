@@ -207,6 +207,11 @@ export const SearchView = () => {
                         title={album.title}
                         subtitle={album.artist}
                         imageUrl={album.coverImage || ''}
+                        onClick={() =>
+                          navigate(
+                            `/album/${album.id}?title=${encodeURIComponent(album.title)}&artist=${encodeURIComponent(album.artist)}`
+                          )
+                        }
                       />
                     ))}
                   </div>

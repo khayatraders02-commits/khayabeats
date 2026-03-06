@@ -95,9 +95,10 @@ async function tryPiped(videoId: string): Promise<{ url: string; mimeType: strin
 // INVIDIOUS - Another fallback
 async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: string } | null> {
   const instances = [
-    "https://inv.odyssey346.dev",
-    "https://invidious.private.coffee",
-    "https://iv.nbooz.de",
+    "https://invidious.fdn.fr",
+    "https://vid.puffyan.us",
+    "https://invidious.privacydev.net",
+    "https://invidious.nerdvpn.de",
     "https://invidious.io.lol",
   ];
   

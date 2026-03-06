@@ -122,6 +122,11 @@ const ArtistProfile = () => {
                 title={single.title}
                 subtitle={single.releaseDate ? new Date(single.releaseDate).getFullYear().toString() : 'Single'}
                 imageUrl={single.coverImage || ''}
+                onClick={() =>
+                  navigate(
+                    `/album/${single.id}?title=${encodeURIComponent(single.title)}&artist=${encodeURIComponent(single.artist || profile.name)}`
+                  )
+                }
               />
             ))}
           </div>
