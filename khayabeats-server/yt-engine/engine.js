@@ -55,6 +55,17 @@ const downloadQueue = new Queue(async (task, cb) => {
   maxRetries: 0,
 });
 
+function getYtDlpPath() {
+  const isWindows = os.platform() === 'win32';
+  const localPath = path.join(__dirname, isWindows ? 'yt-dlp.exe' : 'yt-dlp');
+
+  if (fs.existsSync(localPath)) {
+    return localPath;
+  }
+
+  return 'yt-dlp';
+}
+
 function getCachedFile(videoId) {
   const formats = ['.webm', '.m4a', '.opus', '.mp3', '.ogg'];
 
