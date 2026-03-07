@@ -541,7 +541,10 @@ app.get('/artists/:artistId', async (req, res) => {
       // Songs search via yt-engine
       (async () => {
         try {
-          const r = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(artistName + ' official songs')}&limit=40`);
+          const r = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(artistName + ' official songs')}&limit=40`, {
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) throw new Error(`yt-engine artist search failed (${r.status})`);
           const d = await r.json();
           return d.results || [];
         } catch { return []; }
