@@ -29,6 +29,7 @@ const CONFIG = {
 });
 
 const metadataCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 });
+const pendingAudioRequests = new Map();
 
 app.use(cors());
 app.use(express.json());
@@ -51,12 +52,21 @@ function getContentType(ext) {
   return types[ext] || 'audio/mpeg';
 }
 
+function mapFilePathToCacheEntry(filePath) {
+  const ext = path.extname(filePath);
+  return {
+    filePath,
+    ext,
+    contentType: getContentType(ext),
+  };
+}
+
 function findCachedFile(videoId) {
   const formats = ['.webm', '.m4a', '.opus', '.mp3', '.ogg'];
   for (const ext of formats) {
     const filePath = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
     if (fs.existsSync(filePath)) {
-      return { filePath, ext, contentType: getContentType(ext) };
+      return mapFilePathToCacheEntry(filePath);
     }
   }
   return null;
@@ -89,6 +99,58 @@ function streamFile(filePath, contentType, res) {
   }
 }
 
+async function requestEngineFetch(videoId, title, artist) {
+  const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoId, title, artist }),
+    signal: AbortSignal.timeout(110000),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || `yt-engine request failed (${response.status})`);
+  }
+
+  return data;
+}
+
+async function ensureCachedTrack(videoId, title, artist) {
+  const alreadyCached = findCachedFile(videoId);
+  if (alreadyCached) return alreadyCached;
+
+  const existingRequest = pendingAudioRequests.get(videoId);
+  if (existingRequest) {
+    console.log(`[DEDUPE] Waiting for existing fetch ${videoId}`);
+    return existingRequest;
+  }
+
+  const pendingRequest = (async () => {
+    console.log(`[CACHE MISS] Queueing ${videoId}`);
+    const data = await requestEngineFetch(videoId, title, artist);
+
+    const cached = findCachedFile(videoId);
+    if (cached) return cached;
+
+    if (data?.filePath && fs.existsSync(data.filePath)) {
+      return mapFilePathToCacheEntry(data.filePath);
+    }
+
+    throw new Error('Download completed but file not found');
+  })().finally(() => {
+    pendingAudioRequests.delete(videoId);
+  });
+
+  pendingAudioRequests.set(videoId, pendingRequest);
+  return pendingRequest;
+}
+
 function getCacheStats() {
   try {
     const files = fs.readdirSync(CONFIG.CACHE_DIR);
@@ -102,6 +164,7 @@ function getCacheStats() {
       totalSizeMB: Math.round(totalSize / 1024 / 1024),
       totalSizeGB: (totalSize / 1024 / 1024 / 1024).toFixed(2),
       maxSizeGB: CONFIG.MAX_CACHE_SIZE_GB,
+      pendingDownloads: pendingAudioRequests.size,
     };
   } catch (e) {
     return { error: 'Could not read cache' };
@@ -131,10 +194,28 @@ function cleanupCache(maxAgeDays) {
 // ==================== SEARCH HELPERS ====================
 
 const JUNK_PATTERNS = [
-  /slowed/i, /sped\s*up/i, /remix/i, /cover/i, /\blive\b/i,
-  /reaction/i, /instrumental/i, /karaoke/i, /\b8d\b/i,
-  /fan\s*made/i, /nightcore/i,
+  /slowed/i,
+  /sped\s*up/i,
+  /remix/i,
+  /cover/i,
+  /\blive\b/i,
+  /reaction/i,
+  /instrumental/i,
+  /karaoke/i,
+  /\b8d\b/i,
+  /fan\s*made/i,
+  /nightcore/i,
+  /remake/i,
+  /reimagined/i,
+  /tribute/i,
+  /\btype\s*beat\b/i,
+  /\bmashup\b/i,
+  /\breverb\b/i,
+  /\bletra\b/i,
+  /\bsped\s*and\s*pitched\b/i,
 ];
+
+const OFFICIAL_HINT_PATTERNS = [/official\s*(audio|video)?/i, /\bvevo\b/i, /-\s*topic\b/i];
 
 const STOP_WORDS = new Set(['official', 'audio', 'video', 'lyrics', 'song', 'music', 'the', 'a', 'an', 'and', '&']);
 
@@ -166,11 +247,49 @@ function toSlug(value) {
     .replace(/(^-|-$)/g, '');
 }
 
+function parseDurationToSeconds(duration) {
+  if (!duration || typeof duration !== 'string' || !duration.includes(':')) return null;
+  const parts = duration.split(':').map(p => Number(p));
+  if (parts.some(Number.isNaN)) return null;
+  if (parts.length === 2) return (parts[0] * 60) + parts[1];
+  if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  return null;
+}
+
+function scoreTrack(queryWords, normalizedQuery, track) {
+  const title = track.title || '';
+  const artist = track.artist || '';
+  const combined = `${title} ${artist}`.toLowerCase();
+  const normalizedTrackTitle = normalizeTitle(title);
+
+  let score = 0;
+
+  for (const word of queryWords) {
+    if (artist.toLowerCase().includes(word)) score += 10;
+    if (title.toLowerCase().includes(word)) score += 7;
+  }
+
+  if (normalizedTrackTitle.includes(normalizedQuery)) score += 30;
+  if (OFFICIAL_HINT_PATTERNS.some(pattern => pattern.test(combined))) score += 16;
+
+  const viewCount = Number(track.viewCount || 0);
+  if (viewCount > 0) {
+    score += Math.min(22, Math.log10(viewCount + 1) * 4);
+  }
+
+  const durationSeconds = parseDurationToSeconds(track.duration);
+  if (durationSeconds && durationSeconds < 70) score -= 20;
+  if (durationSeconds && durationSeconds > 120) score += 8;
+
+  return score;
+}
+
 /**
  * Filter, deduplicate and rank tracks
  */
 function rankTracks(query, tracks) {
   const words = significantWords(query);
+  const normalizedQuery = normalizeTitle(query);
 
   const filtered = tracks.filter(track => {
     const text = `${track.title} ${track.artist}`;
@@ -181,9 +300,13 @@ function rankTracks(query, tracks) {
     return matchCount >= Math.min(2, words.length);
   });
 
-  // Deduplicate by normalized title + artist
+  const sorted = filtered
+    .map(track => ({ track, score: scoreTrack(words, normalizedQuery, track) }))
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.track);
+
   const dedupMap = new Map();
-  for (const track of filtered) {
+  for (const track of sorted) {
     const key = `${normalizeTitle(track.title)}::${track.artist.toLowerCase()}`;
     if (!dedupMap.has(key)) dedupMap.set(key, track);
   }
@@ -291,7 +414,8 @@ app.get('/health', async (req, res) => {
       engine = {
         online: true,
         server: data.server,
-        queue: data?.stats?.currentQueue ?? 0,
+        queue: data?.stats?.queuedJobs ?? data?.stats?.currentQueue ?? 0,
+        activeDownloads: data?.stats?.activeDownloads ?? 0,
       };
     }
   } catch {
@@ -313,25 +437,9 @@ app.get('/stream/:videoId', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'Video ID required' });
 
   try {
-    const cached = findCachedFile(videoId);
-    if (cached) {
-      console.log(`[CACHE HIT] Streaming ${videoId}`);
-      return streamFile(cached.filePath, cached.contentType, res);
-    }
-
-    console.log(`[CACHE MISS] Fetching ${videoId} from yt-engine`);
-    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoId }),
-    });
-
-    if (!response.ok) throw new Error('Failed to fetch from yt-engine');
-    const data = await response.json();
-    if (!data.success || !data.filePath) throw new Error(data.error || 'Download failed');
-
-    const ext = path.extname(data.filePath);
-    return streamFile(data.filePath, getContentType(ext), res);
+    const cached = await ensureCachedTrack(videoId);
+    console.log(`[CACHE HIT] Streaming ${videoId}`);
+    return streamFile(cached.filePath, cached.contentType, res);
   } catch (error) {
     console.error(`[ERROR] Stream failed for ${videoId}:`, error.message);
     res.status(500).json({ error: 'Stream failed', message: error.message });
@@ -343,33 +451,16 @@ app.post('/audio-url', async (req, res) => {
   if (!videoId) return res.status(400).json({ success: false, error: 'Video ID required' });
 
   try {
-    const cached = findCachedFile(videoId);
-    if (cached) {
-      console.log(`[CACHE HIT] ${videoId}`);
-      return res.json({
-        success: true,
-        audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
-        cached: true,
-      });
-    }
-
-    console.log(`[CACHE MISS] Queueing ${videoId}`);
-    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoId, title, artist }),
-    });
-
-    const data = await response.json();
-    if (!data.success) throw new Error(data.error || 'Download failed');
+    const wasCached = Boolean(findCachedFile(videoId));
+    await ensureCachedTrack(videoId, title, artist);
 
     return res.json({
       success: true,
       audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
-      cached: false,
+      cached: wasCached,
     });
   } catch (error) {
-    console.error(`[ERROR] Audio URL failed:`, error.message);
+    console.error('[ERROR] Audio URL failed:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -394,7 +485,10 @@ app.get('/search', async (req, res) => {
     // Fetch raw results from yt-engine
     let rawTracks = [];
     try {
-      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(q)}&limit=${limit}`, {
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) throw new Error(`yt-engine search failed (${response.status})`);
       const data = await response.json();
       rawTracks = data.results || [];
     } catch (e) {
@@ -447,7 +541,10 @@ app.get('/artists/:artistId', async (req, res) => {
       // Songs search via yt-engine
       (async () => {
         try {
-          const r = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(artistName + ' official songs')}&limit=40`);
+          const r = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(artistName + ' official songs')}&limit=40`, {
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) throw new Error(`yt-engine artist search failed (${r.status})`);
           const d = await r.json();
           return d.results || [];
         } catch { return []; }
@@ -566,26 +663,7 @@ app.get('/offline/download/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
   try {
-    let cached = findCachedFile(videoId);
-
-    if (!cached) {
-      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId }),
-      });
-
-      const data = await response.json();
-      if (!data.success || !data.filePath) {
-        return res.status(500).json({ error: 'Download failed' });
-      }
-
-      cached = findCachedFile(videoId);
-    }
-
-    if (!cached) {
-      return res.status(404).json({ error: 'File not found after download' });
-    }
+    const cached = await ensureCachedTrack(videoId);
 
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${videoId}${cached.ext}"`);

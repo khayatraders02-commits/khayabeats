@@ -1,9 +1,9 @@
 /**
  * KHAYABEATS YT-DLP Engine
- * 
+ *
  * Dedicated microservice for YouTube audio extraction.
  * Uses yt-dlp for reliable audio downloading with queue management.
- * 
+ *
  * Run with: node yt-engine/engine.js
  */
 
@@ -17,333 +17,385 @@ const Queue = require('better-queue');
 const app = express();
 const PORT = process.env.YT_ENGINE_PORT || 3002;
 
-// Configuration
 const CONFIG = {
-  TEMP_DIR: path.join(__dirname, 'temp'),
   CACHE_DIR: path.join(__dirname, '..', 'storage', 'music-cache'),
-  MAX_CONCURRENT_DOWNLOADS: 10,
-  DOWNLOAD_TIMEOUT: 120000, // 2 minutes
+  MAX_CONCURRENT_DOWNLOADS: Number(process.env.MAX_CONCURRENT_DOWNLOADS || 10),
+  DOWNLOAD_TIMEOUT: Number(process.env.DOWNLOAD_TIMEOUT_MS || 180000),
+  MAX_DOWNLOAD_ATTEMPTS: Number(process.env.MAX_DOWNLOAD_ATTEMPTS || 3),
+  RETRY_BACKOFF_MS: Number(process.env.RETRY_BACKOFF_MS || 1200),
   YT_DLP_PATH: getYtDlpPath(),
 };
 
-// Ensure directories exist
-[CONFIG.TEMP_DIR, CONFIG.CACHE_DIR].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
+if (!fs.existsSync(CONFIG.CACHE_DIR)) {
+  fs.mkdirSync(CONFIG.CACHE_DIR, { recursive: true });
+}
 
 app.use(express.json());
 
-// Download statistics
 const stats = {
-  totalDownloads: 0,
+  totalRequests: 0,
   successfulDownloads: 0,
   failedDownloads: 0,
-  currentQueue: 0,
+  cacheHits: 0,
+  activeDownloads: 0,
+  queuedJobs: 0,
 };
 
-// Download queue with concurrency limit
+const inflightDownloads = new Map();
+
 const downloadQueue = new Queue(async (task, cb) => {
-  stats.currentQueue--;
-  
   try {
-    const result = await downloadAudio(task.videoId, task.title, task.artist);
-    stats.successfulDownloads++;
+    const result = await downloadAudioWithRetry(task.videoId, task.title, task.artist);
     cb(null, result);
   } catch (error) {
-    stats.failedDownloads++;
     cb(error);
   }
 }, {
   concurrent: CONFIG.MAX_CONCURRENT_DOWNLOADS,
-  maxRetries: 2,
-  retryDelay: 2000,
+  maxRetries: 0,
 });
+
+function getYtDlpPath() {
+  const isWindows = os.platform() === 'win32';
+  const localPath = path.join(__dirname, isWindows ? 'yt-dlp.exe' : 'yt-dlp');
+
+  if (fs.existsSync(localPath)) {
+    return localPath;
+  }
+
+  return 'yt-dlp';
+}
+
+function getCachedFile(videoId) {
+  const formats = ['.webm', '.m4a', '.opus', '.mp3', '.ogg'];
+
+  for (const ext of formats) {
+    const filePath = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
+    if (fs.existsSync(filePath)) {
+      return { filePath, ext };
+    }
+  }
+
+  return null;
+}
+
+function getLatestFileByPrefix(videoId) {
+  try {
+    const prefix = `${videoId}.`;
+    const files = fs.readdirSync(CONFIG.CACHE_DIR)
+      .filter((name) => name.startsWith(prefix) && !name.endsWith('.part'));
+
+    if (files.length === 0) return null;
+
+    const sorted = files
+      .map((name) => {
+        const filePath = path.join(CONFIG.CACHE_DIR, name);
+        const stat = fs.statSync(filePath);
+        return { name, filePath, mtime: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    const latest = sorted[0];
+    return { filePath: latest.filePath, ext: path.extname(latest.filePath) };
+  } catch {
+    return null;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function trimStderr(stderr) {
+  if (!stderr) return '';
+
+  const line = stderr
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(-1)[0];
+
+  return line || '';
+}
+
+function enqueueDownloadTask(task) {
+  stats.queuedJobs += 1;
+
+  return new Promise((resolve, reject) => {
+    downloadQueue.push(task, (err, result) => {
+      stats.queuedJobs = Math.max(0, stats.queuedJobs - 1);
+      if (err) return reject(err);
+      resolve(result);
+    });
+  });
+}
+
+async function downloadAudioWithRetry(videoId, title, artist) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= CONFIG.MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      if (attempt > 1) {
+        console.log(`[RETRY] ${videoId} attempt ${attempt}/${CONFIG.MAX_DOWNLOAD_ATTEMPTS}`);
+      }
+
+      return await runYtDlpDownload(videoId, title, artist);
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === CONFIG.MAX_DOWNLOAD_ATTEMPTS) {
+        break;
+      }
+
+      const backoff = CONFIG.RETRY_BACKOFF_MS * attempt;
+      await sleep(backoff);
+    }
+  }
+
+  throw lastError || new Error('Download failed');
+}
+
+function runYtDlpDownload(videoId) {
+  return new Promise((resolve, reject) => {
+    const existing = getCachedFile(videoId);
+    if (existing) {
+      return resolve({ filePath: existing.filePath, cached: true });
+    }
+
+    const outputTemplate = path.join(CONFIG.CACHE_DIR, `${videoId}.%(ext)s`);
+
+    const args = [
+      `https://www.youtube.com/watch?v=${videoId}`,
+      '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[ext=opus]/bestaudio',
+      '--output', outputTemplate,
+      '--no-playlist',
+      '--no-warnings',
+      '--no-check-certificates',
+      '--ignore-errors',
+      '--socket-timeout', '20',
+      '--retries', '3',
+      '--fragment-retries', '3',
+      '--extractor-retries', '3',
+      '--concurrent-fragments', '1',
+      '--force-ipv4',
+      '--no-part',
+    ];
+
+    console.log(`[DOWNLOAD] Starting: ${videoId}`);
+
+    const process = spawn(CONFIG.YT_DLP_PATH, args);
+
+    let stderr = '';
+    let settled = false;
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      process.kill('SIGKILL');
+      reject(new Error('Download timeout'));
+    }, CONFIG.DOWNLOAD_TIMEOUT);
+
+    process.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    process.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+
+      if (code !== 0) {
+        const stderrHint = trimStderr(stderr);
+        return reject(new Error(stderrHint || `yt-dlp exited with code ${code}`));
+      }
+
+      const cached = getCachedFile(videoId) || getLatestFileByPrefix(videoId);
+      if (!cached) {
+        return reject(new Error('Download completed but file not found'));
+      }
+
+      console.log(`[CACHED] ${path.basename(cached.filePath)}`);
+      resolve({ filePath: cached.filePath, cached: false });
+    });
+
+    process.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(new Error(`Failed to start yt-dlp: ${err.message}`));
+    });
+  });
+}
 
 // ==================== ROUTES ====================
 
-/**
- * Service info (for browser checks)
- */
 app.get('/', (req, res) => {
   res.json({
     name: 'KhayaBeats YT Engine',
     status: 'online',
-    version: '1.0.0',
-    endpoints: ['GET /health', 'POST /fetch', 'GET /search?q=', 'GET /queue'],
+    version: '1.1.0',
+    endpoints: ['GET /', 'GET /health', 'POST /fetch', 'GET /search?q=', 'GET /queue'],
   });
 });
 
-/**
- * Health check
- */
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     server: 'khayabeats-yt-engine',
-    version: '1.0.0',
+    version: '1.1.0',
     stats,
     ytdlp: CONFIG.YT_DLP_PATH,
   });
 });
 
-/**
- * Fetch/Download audio
- * POST /fetch
- * Body: { videoId: string, title?: string, artist?: string }
- */
 app.post('/fetch', async (req, res) => {
   const { videoId, title, artist } = req.body;
-  
+
   if (!videoId) {
     return res.status(400).json({ success: false, error: 'Video ID required' });
   }
-  
-  stats.totalDownloads++;
-  stats.currentQueue++;
-  
-  console.log(`[QUEUE] Adding ${videoId} to download queue (${stats.currentQueue} in queue)`);
-  
-  // Check if already downloaded (any format)
-  const formats = ['.webm', '.m4a', '.opus', '.mp3'];
-  for (const ext of formats) {
-    const existingFile = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
-    if (fs.existsSync(existingFile)) {
-      stats.currentQueue--;
-      console.log(`[CACHE] ${videoId} already exists`);
-      return res.json({
-        success: true,
-        filePath: existingFile,
-        cached: true,
-      });
-    }
+
+  stats.totalRequests += 1;
+
+  const cached = getCachedFile(videoId);
+  if (cached) {
+    stats.cacheHits += 1;
+    return res.json({
+      success: true,
+      filePath: cached.filePath,
+      cached: true,
+    });
   }
-  
-  // Add to queue
-  downloadQueue.push({ videoId, title, artist }, (err, result) => {
-    if (err) {
-      console.error(`[ERROR] Download failed for ${videoId}:`, err.message);
-      return res.status(500).json({
-        success: false,
-        error: err.message,
-      });
-    }
-    
-    console.log(`[SUCCESS] Downloaded ${videoId}`);
-    res.json({
+
+  let requestPromise = inflightDownloads.get(videoId);
+
+  if (!requestPromise) {
+    console.log(`[QUEUE] Adding ${videoId} to download queue`);
+
+    requestPromise = (async () => {
+      stats.activeDownloads = inflightDownloads.size + 1;
+
+      try {
+        const result = await enqueueDownloadTask({ videoId, title, artist });
+        stats.successfulDownloads += 1;
+        return result;
+      } catch (error) {
+        stats.failedDownloads += 1;
+        throw error;
+      }
+    })().finally(() => {
+      inflightDownloads.delete(videoId);
+      stats.activeDownloads = inflightDownloads.size;
+    });
+
+    inflightDownloads.set(videoId, requestPromise);
+  } else {
+    console.log(`[DEDUPE] Joining in-flight download for ${videoId}`);
+  }
+
+  try {
+    const result = await requestPromise;
+    return res.json({
       success: true,
       filePath: result.filePath,
-      cached: false,
+      cached: Boolean(result.cached),
     });
-  });
+  } catch (error) {
+    console.error(`[ERROR] Download failed for ${videoId}:`, error.message);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
 });
 
-/**
- * Search YouTube
- * GET /search?q=<query>&limit=20
- */
 app.get('/search', async (req, res) => {
   const { q, limit = 20 } = req.query;
-  
+
   if (!q) {
     return res.status(400).json({ error: 'Query required' });
   }
-  
+
   try {
-    const results = await searchYouTube(q, parseInt(limit));
+    const results = await searchYouTube(q, parseInt(limit, 10));
     res.json({ results });
   } catch (error) {
     res.status(500).json({ error: 'Search failed', message: error.message });
   }
 });
 
-/**
- * Queue status
- */
 app.get('/queue', (req, res) => {
   res.json({
-    currentQueue: stats.currentQueue,
+    currentQueue: stats.queuedJobs,
+    inFlight: inflightDownloads.size,
     stats,
   });
 });
 
-// ==================== CORE FUNCTIONS ====================
+// ==================== SEARCH ====================
 
-/**
- * Get yt-dlp executable path
- */
-function getYtDlpPath() {
-  const isWindows = os.platform() === 'win32';
-  const localPath = path.join(__dirname, isWindows ? 'yt-dlp.exe' : 'yt-dlp');
-  
-  // Check for local yt-dlp
-  if (fs.existsSync(localPath)) {
-    return localPath;
-  }
-  
-  // Use system yt-dlp
-  return 'yt-dlp';
-}
-
-/**
- * Download audio from YouTube - NO FFMPEG REQUIRED
- * Downloads best audio in native format (webm/m4a/opus)
- */
-async function downloadAudio(videoId, title, artist) {
-  return new Promise((resolve, reject) => {
-    const tempFile = path.join(CONFIG.TEMP_DIR, `${videoId}.%(ext)s`);
-    
-    // yt-dlp arguments - NO conversion, keeps original format
-    const args = [
-      `https://www.youtube.com/watch?v=${videoId}`,
-      '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
-      '--output', tempFile,
-      '--no-playlist',
-      '--no-warnings',
-      '--no-check-certificates',
-      // Avoid rate limiting
-      '--sleep-interval', '1',
-      '--max-sleep-interval', '3',
-      // Retry on failure
-      '--retries', '3',
-      '--fragment-retries', '3',
-    ];
-    
-    console.log(`[DOWNLOAD] Starting: ${videoId}`);
-    
-    const process = spawn(CONFIG.YT_DLP_PATH, args, {
-      timeout: CONFIG.DOWNLOAD_TIMEOUT,
-    });
-    
-    let stderr = '';
-    
-    process.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-    
-    process.on('close', (code) => {
-      if (code === 0) {
-        // Find the downloaded file (check multiple extensions)
-        const formats = ['.webm', '.m4a', '.opus', '.mp3'];
-        for (const ext of formats) {
-          const downloadedFile = path.join(CONFIG.TEMP_DIR, `${videoId}${ext}`);
-          if (fs.existsSync(downloadedFile)) {
-            // Move to cache directory
-            const cachedFile = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
-            fs.copyFileSync(downloadedFile, cachedFile);
-            fs.unlinkSync(downloadedFile);
-            console.log(`[CACHED] ${videoId}${ext}`);
-            return resolve({ filePath: cachedFile });
-          }
-        }
-        reject(new Error('Download completed but file not found'));
-      } else {
-        reject(new Error(`yt-dlp exited with code ${code}: ${stderr}`));
-      }
-    });
-    
-    process.on('error', (err) => {
-      reject(new Error(`Failed to start yt-dlp: ${err.message}`));
-    });
-    
-    // Timeout
-    setTimeout(() => {
-      process.kill();
-      reject(new Error('Download timeout'));
-    }, CONFIG.DOWNLOAD_TIMEOUT);
-  });
-}
-
-/**
- * Search YouTube using yt-dlp
- */
 async function searchYouTube(query, limit = 20) {
   return new Promise((resolve, reject) => {
     const args = [
       `ytsearch${limit}:${query}`,
-      '--flat-playlist',
-      '--dump-json',
+      '--dump-single-json',
       '--no-warnings',
       '--quiet',
     ];
-    
+
     const process = spawn(CONFIG.YT_DLP_PATH, args);
-    
+
     let stdout = '';
     let stderr = '';
-    
+
     process.stdout.on('data', (data) => {
       stdout += data.toString();
     });
-    
+
     process.stderr.on('data', (data) => {
       stderr += data.toString();
     });
-    
+
     process.on('close', (code) => {
       if (code !== 0) {
-        return reject(new Error(`Search failed: ${stderr}`));
+        return reject(new Error(trimStderr(stderr) || `Search failed with code ${code}`));
       }
-      
+
       try {
-        // Parse each line as JSON (one result per line)
-        const results = stdout
-          .trim()
-          .split('\n')
-          .filter(line => line)
-          .map(line => {
-            const data = JSON.parse(line);
-            return {
-              id: data.id,
-              videoId: data.id,
-              title: data.title,
-              artist: data.channel || data.uploader || 'Unknown',
-              thumbnailUrl: `https://i.ytimg.com/vi/${data.id}/mqdefault.jpg`,
-              duration: formatDuration(data.duration),
-            };
-          });
-        
+        const json = JSON.parse(stdout || '{}');
+        const entries = Array.isArray(json.entries) ? json.entries : [];
+
+        const results = entries
+          .filter((entry) => entry && entry.id)
+          .map((entry) => ({
+            id: entry.id,
+            videoId: entry.id,
+            title: entry.title || 'Unknown Title',
+            artist: entry.channel || entry.uploader || 'Unknown',
+            channelId: entry.channel_id || null,
+            thumbnailUrl: `https://i.ytimg.com/vi/${entry.id}/mqdefault.jpg`,
+            duration: formatDuration(entry.duration),
+            viewCount: entry.view_count || 0,
+          }));
+
         resolve(results);
-      } catch (e) {
-        reject(new Error(`Failed to parse results: ${e.message}`));
+      } catch (error) {
+        reject(new Error(`Failed to parse results: ${error.message}`));
       }
     });
-    
+
     process.on('error', (err) => {
       reject(new Error(`Search error: ${err.message}`));
     });
   });
 }
 
-/**
- * Format duration from seconds to mm:ss
- */
 function formatDuration(seconds) {
   if (!seconds) return '0:00';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
-
-// Cleanup old temp files periodically
-setInterval(() => {
-  const maxAge = 30 * 60 * 1000; // 30 minutes
-  const now = Date.now();
-  
-  try {
-    const files = fs.readdirSync(CONFIG.TEMP_DIR);
-    files.forEach(file => {
-      const filePath = path.join(CONFIG.TEMP_DIR, file);
-      const stat = fs.statSync(filePath);
-      if (now - stat.mtimeMs > maxAge) {
-        fs.unlinkSync(filePath);
-      }
-    });
-  } catch (e) {
-    console.error('Temp cleanup error:', e);
-  }
-}, 5 * 60 * 1000); // Every 5 minutes
 
 // ==================== START SERVER ====================
 
@@ -362,20 +414,19 @@ app.listen(PORT, () => {
 ║                                                        ║
 ╚════════════════════════════════════════════════════════╝
   `);
-  
-  // Check if yt-dlp is available
+
   exec(`${CONFIG.YT_DLP_PATH} --version`, (error, stdout) => {
     if (error) {
       console.error(`
 ⚠️  WARNING: yt-dlp not found!
-    
+
     Please install yt-dlp:
-    
-    Windows: 
+
+    Windows:
       pip install yt-dlp
       OR
       Download from https://github.com/yt-dlp/yt-dlp/releases
-    
+
     macOS/Linux:
       pip install yt-dlp
       OR

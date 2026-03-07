@@ -204,7 +204,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
                 title: track.title, 
                 artist: track.artist 
               }),
-              signal: AbortSignal.timeout(30000), // 30s for downloads
+              signal: AbortSignal.timeout(110000), // wait for engine queue without duplicate retries
             });
             
             if (localResponse.ok) {
