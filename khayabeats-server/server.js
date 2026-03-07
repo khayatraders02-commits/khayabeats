@@ -414,7 +414,8 @@ app.get('/health', async (req, res) => {
       engine = {
         online: true,
         server: data.server,
-        queue: data?.stats?.currentQueue ?? 0,
+        queue: data?.stats?.queuedJobs ?? data?.stats?.currentQueue ?? 0,
+        activeDownloads: data?.stats?.activeDownloads ?? 0,
       };
     }
   } catch {
