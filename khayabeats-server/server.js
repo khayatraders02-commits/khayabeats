@@ -238,6 +238,15 @@ function significantWords(query) {
     .filter(w => w.length > 2 && !STOP_WORDS.has(w));
 }
 
+function toSlug(value) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
 function parseDurationToSeconds(duration) {
   if (!duration || typeof duration !== 'string' || !duration.includes(':')) return null;
   const parts = duration.split(':').map(p => Number(p));
