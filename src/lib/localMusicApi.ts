@@ -109,6 +109,27 @@ const significantWords = (query: string) =>
   query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 
+const mapTrack = (item: any): Track => ({
+  id: item.id || item.videoId,
+  videoId: item.videoId || item.id,
+  title: item.title || 'Unknown Title',
+  artist: item.artist || 'Unknown Artist',
+  thumbnailUrl: item.thumbnailUrl || '',
+  duration: item.duration || '0:00',
+});
+
+const withTimeout = async (url: string, timeoutMs = 20000) => {
+  return fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+};
+
+const formatDurationMs = (ms?: number) => {
+  if (!ms || ms <= 0) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
 const parseDurationToSeconds = (duration?: string) => {
   if (!duration || !duration.includes(':')) return null;
   const parts = duration.split(':').map((value) => Number(value));
