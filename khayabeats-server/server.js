@@ -657,26 +657,7 @@ app.get('/offline/download/:videoId', async (req, res) => {
   const { videoId } = req.params;
 
   try {
-    let cached = findCachedFile(videoId);
-
-    if (!cached) {
-      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId }),
-      });
-
-      const data = await response.json();
-      if (!data.success || !data.filePath) {
-        return res.status(500).json({ error: 'Download failed' });
-      }
-
-      cached = findCachedFile(videoId);
-    }
-
-    if (!cached) {
-      return res.status(404).json({ error: 'File not found after download' });
-    }
+    const cached = await ensureCachedTrack(videoId);
 
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${videoId}${cached.ext}"`);
