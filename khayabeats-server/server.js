@@ -485,7 +485,10 @@ app.get('/search', async (req, res) => {
     // Fetch raw results from yt-engine
     let rawTracks = [];
     try {
-      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(q)}&limit=${limit}`, {
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) throw new Error(`yt-engine search failed (${response.status})`);
       const data = await response.json();
       rawTracks = data.results || [];
     } catch (e) {
