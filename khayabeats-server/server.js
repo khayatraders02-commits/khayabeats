@@ -437,25 +437,9 @@ app.get('/stream/:videoId', async (req, res) => {
   if (!videoId) return res.status(400).json({ error: 'Video ID required' });
 
   try {
-    const cached = findCachedFile(videoId);
-    if (cached) {
-      console.log(`[CACHE HIT] Streaming ${videoId}`);
-      return streamFile(cached.filePath, cached.contentType, res);
-    }
-
-    console.log(`[CACHE MISS] Fetching ${videoId} from yt-engine`);
-    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoId }),
-    });
-
-    if (!response.ok) throw new Error('Failed to fetch from yt-engine');
-    const data = await response.json();
-    if (!data.success || !data.filePath) throw new Error(data.error || 'Download failed');
-
-    const ext = path.extname(data.filePath);
-    return streamFile(data.filePath, getContentType(ext), res);
+    const cached = await ensureCachedTrack(videoId);
+    console.log(`[CACHE HIT] Streaming ${videoId}`);
+    return streamFile(cached.filePath, cached.contentType, res);
   } catch (error) {
     console.error(`[ERROR] Stream failed for ${videoId}:`, error.message);
     res.status(500).json({ error: 'Stream failed', message: error.message });
@@ -467,33 +451,16 @@ app.post('/audio-url', async (req, res) => {
   if (!videoId) return res.status(400).json({ success: false, error: 'Video ID required' });
 
   try {
-    const cached = findCachedFile(videoId);
-    if (cached) {
-      console.log(`[CACHE HIT] ${videoId}`);
-      return res.json({
-        success: true,
-        audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
-        cached: true,
-      });
-    }
-
-    console.log(`[CACHE MISS] Queueing ${videoId}`);
-    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoId, title, artist }),
-    });
-
-    const data = await response.json();
-    if (!data.success) throw new Error(data.error || 'Download failed');
+    const wasCached = Boolean(findCachedFile(videoId));
+    await ensureCachedTrack(videoId, title, artist);
 
     return res.json({
       success: true,
       audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
-      cached: false,
+      cached: wasCached,
     });
   } catch (error) {
-    console.error(`[ERROR] Audio URL failed:`, error.message);
+    console.error('[ERROR] Audio URL failed:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
