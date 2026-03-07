@@ -29,6 +29,7 @@ const CONFIG = {
 });
 
 const metadataCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 });
+const pendingAudioRequests = new Map();
 
 app.use(cors());
 app.use(express.json());
@@ -51,12 +52,21 @@ function getContentType(ext) {
   return types[ext] || 'audio/mpeg';
 }
 
+function mapFilePathToCacheEntry(filePath) {
+  const ext = path.extname(filePath);
+  return {
+    filePath,
+    ext,
+    contentType: getContentType(ext),
+  };
+}
+
 function findCachedFile(videoId) {
   const formats = ['.webm', '.m4a', '.opus', '.mp3', '.ogg'];
   for (const ext of formats) {
     const filePath = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
     if (fs.existsSync(filePath)) {
-      return { filePath, ext, contentType: getContentType(ext) };
+      return mapFilePathToCacheEntry(filePath);
     }
   }
   return null;
@@ -89,6 +99,58 @@ function streamFile(filePath, contentType, res) {
   }
 }
 
+async function requestEngineFetch(videoId, title, artist) {
+  const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoId, title, artist }),
+    signal: AbortSignal.timeout(110000),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || `yt-engine request failed (${response.status})`);
+  }
+
+  return data;
+}
+
+async function ensureCachedTrack(videoId, title, artist) {
+  const alreadyCached = findCachedFile(videoId);
+  if (alreadyCached) return alreadyCached;
+
+  const existingRequest = pendingAudioRequests.get(videoId);
+  if (existingRequest) {
+    console.log(`[DEDUPE] Waiting for existing fetch ${videoId}`);
+    return existingRequest;
+  }
+
+  const pendingRequest = (async () => {
+    console.log(`[CACHE MISS] Queueing ${videoId}`);
+    const data = await requestEngineFetch(videoId, title, artist);
+
+    const cached = findCachedFile(videoId);
+    if (cached) return cached;
+
+    if (data?.filePath && fs.existsSync(data.filePath)) {
+      return mapFilePathToCacheEntry(data.filePath);
+    }
+
+    throw new Error('Download completed but file not found');
+  })().finally(() => {
+    pendingAudioRequests.delete(videoId);
+  });
+
+  pendingAudioRequests.set(videoId, pendingRequest);
+  return pendingRequest;
+}
+
 function getCacheStats() {
   try {
     const files = fs.readdirSync(CONFIG.CACHE_DIR);
@@ -102,6 +164,7 @@ function getCacheStats() {
       totalSizeMB: Math.round(totalSize / 1024 / 1024),
       totalSizeGB: (totalSize / 1024 / 1024 / 1024).toFixed(2),
       maxSizeGB: CONFIG.MAX_CACHE_SIZE_GB,
+      pendingDownloads: pendingAudioRequests.size,
     };
   } catch (e) {
     return { error: 'Could not read cache' };
