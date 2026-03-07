@@ -167,6 +167,7 @@ const rankTracks = (query: string, tracks: Track[]): Track[] => {
 
   return Array.from(dedupedMap.values());
 };
+const deriveArtists = (tracks: Track[]): ArtistSearchResult[] => {
   const counts = new Map<string, { name: string; score: number; image?: string }>();
 
   tracks.forEach((track, idx) => {
