@@ -66,10 +66,28 @@ export interface ArtistProfileResponse {
 }
 
 const JUNK_PATTERNS = [
-  /slowed/i, /sped\s*up/i, /remix/i, /cover/i, /\blive\b/i,
-  /reaction/i, /instrumental/i, /karaoke/i, /\b8d\b/i,
-  /fan\s*made/i, /nightcore/i,
+  /slowed/i,
+  /sped\s*up/i,
+  /remix/i,
+  /cover/i,
+  /\blive\b/i,
+  /reaction/i,
+  /instrumental/i,
+  /karaoke/i,
+  /\b8d\b/i,
+  /fan\s*made/i,
+  /nightcore/i,
+  /remake/i,
+  /reimagined/i,
+  /tribute/i,
+  /\btype\s*beat\b/i,
+  /\bmashup\b/i,
+  /\breverb\b/i,
+  /\bletra\b/i,
+  /\bsped\s*and\s*pitched\b/i,
 ];
+
+const OFFICIAL_HINT_PATTERNS = [/official\s*(audio|video)?/i, /\bvevo\b/i, /-\s*topic\b/i];
 
 const STOP_WORDS = new Set(['official', 'audio', 'video', 'lyrics', 'song', 'music', 'the', 'a', 'an', 'and', '&']);
 
@@ -91,29 +109,41 @@ const significantWords = (query: string) =>
   query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 
-const mapTrack = (item: any): Track => ({
-  id: item.id || item.videoId,
-  videoId: item.videoId || item.id,
-  title: item.title || 'Unknown Title',
-  artist: item.artist || 'Unknown Artist',
-  thumbnailUrl: item.thumbnailUrl || '',
-  duration: item.duration || '0:00',
-});
-
-const withTimeout = async (url: string, timeoutMs = 20000) => {
-  return fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+const parseDurationToSeconds = (duration?: string) => {
+  if (!duration || !duration.includes(':')) return null;
+  const parts = duration.split(':').map((value) => Number(value));
+  if (parts.some(Number.isNaN)) return null;
+  if (parts.length === 2) return (parts[0] * 60) + parts[1];
+  if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  return null;
 };
 
-const formatDurationMs = (ms?: number) => {
-  if (!ms || ms <= 0) return '0:00';
-  const totalSeconds = Math.floor(ms / 1000);
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+const scoreTrack = (queryWords: string[], normalizedQuery: string, track: Track) => {
+  const title = track.title || '';
+  const artist = track.artist || '';
+  const combined = `${title} ${artist}`.toLowerCase();
+  const normalizedTrackTitle = normalizeTitle(title);
+
+  let score = 0;
+
+  queryWords.forEach((word) => {
+    if (artist.toLowerCase().includes(word)) score += 10;
+    if (title.toLowerCase().includes(word)) score += 7;
+  });
+
+  if (normalizedTrackTitle.includes(normalizedQuery)) score += 30;
+  if (OFFICIAL_HINT_PATTERNS.some((pattern) => pattern.test(combined))) score += 16;
+
+  const durationSeconds = parseDurationToSeconds(track.duration);
+  if (durationSeconds && durationSeconds < 70) score -= 20;
+  if (durationSeconds && durationSeconds > 120) score += 8;
+
+  return score;
 };
 
 const rankTracks = (query: string, tracks: Track[]): Track[] => {
   const words = significantWords(query);
+  const normalizedQuery = normalizeTitle(query);
 
   const filtered = tracks.filter((track) => {
     const text = `${track.title} ${track.artist}`;
@@ -124,16 +154,19 @@ const rankTracks = (query: string, tracks: Track[]): Track[] => {
     return matchCount >= Math.min(2, words.length);
   });
 
+  const sorted = filtered
+    .map((track) => ({ track, score: scoreTrack(words, normalizedQuery, track) }))
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.track);
+
   const dedupedMap = new Map<string, Track>();
-  for (const track of filtered) {
+  for (const track of sorted) {
     const key = `${normalizeTitle(track.title)}::${track.artist.toLowerCase()}`;
     if (!dedupedMap.has(key)) dedupedMap.set(key, track);
   }
 
   return Array.from(dedupedMap.values());
 };
-
-const deriveArtists = (tracks: Track[]): ArtistSearchResult[] => {
   const counts = new Map<string, { name: string; score: number; image?: string }>();
 
   tracks.forEach((track, idx) => {
