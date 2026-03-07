@@ -194,10 +194,28 @@ function cleanupCache(maxAgeDays) {
 // ==================== SEARCH HELPERS ====================
 
 const JUNK_PATTERNS = [
-  /slowed/i, /sped\s*up/i, /remix/i, /cover/i, /\blive\b/i,
-  /reaction/i, /instrumental/i, /karaoke/i, /\b8d\b/i,
-  /fan\s*made/i, /nightcore/i,
+  /slowed/i,
+  /sped\s*up/i,
+  /remix/i,
+  /cover/i,
+  /\blive\b/i,
+  /reaction/i,
+  /instrumental/i,
+  /karaoke/i,
+  /\b8d\b/i,
+  /fan\s*made/i,
+  /nightcore/i,
+  /remake/i,
+  /reimagined/i,
+  /tribute/i,
+  /\btype\s*beat\b/i,
+  /\bmashup\b/i,
+  /\breverb\b/i,
+  /\bletra\b/i,
+  /\bsped\s*and\s*pitched\b/i,
 ];
+
+const OFFICIAL_HINT_PATTERNS = [/official\s*(audio|video)?/i, /\bvevo\b/i, /-\s*topic\b/i];
 
 const STOP_WORDS = new Set(['official', 'audio', 'video', 'lyrics', 'song', 'music', 'the', 'a', 'an', 'and', '&']);
 
@@ -220,13 +238,41 @@ function significantWords(query) {
     .filter(w => w.length > 2 && !STOP_WORDS.has(w));
 }
 
-function toSlug(value) {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
+function parseDurationToSeconds(duration) {
+  if (!duration || typeof duration !== 'string' || !duration.includes(':')) return null;
+  const parts = duration.split(':').map(p => Number(p));
+  if (parts.some(Number.isNaN)) return null;
+  if (parts.length === 2) return (parts[0] * 60) + parts[1];
+  if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  return null;
+}
+
+function scoreTrack(queryWords, normalizedQuery, track) {
+  const title = track.title || '';
+  const artist = track.artist || '';
+  const combined = `${title} ${artist}`.toLowerCase();
+  const normalizedTrackTitle = normalizeTitle(title);
+
+  let score = 0;
+
+  for (const word of queryWords) {
+    if (artist.toLowerCase().includes(word)) score += 10;
+    if (title.toLowerCase().includes(word)) score += 7;
+  }
+
+  if (normalizedTrackTitle.includes(normalizedQuery)) score += 30;
+  if (OFFICIAL_HINT_PATTERNS.some(pattern => pattern.test(combined))) score += 16;
+
+  const viewCount = Number(track.viewCount || 0);
+  if (viewCount > 0) {
+    score += Math.min(22, Math.log10(viewCount + 1) * 4);
+  }
+
+  const durationSeconds = parseDurationToSeconds(track.duration);
+  if (durationSeconds && durationSeconds < 70) score -= 20;
+  if (durationSeconds && durationSeconds > 120) score += 8;
+
+  return score;
 }
 
 /**
@@ -234,6 +280,7 @@ function toSlug(value) {
  */
 function rankTracks(query, tracks) {
   const words = significantWords(query);
+  const normalizedQuery = normalizeTitle(query);
 
   const filtered = tracks.filter(track => {
     const text = `${track.title} ${track.artist}`;
@@ -244,9 +291,13 @@ function rankTracks(query, tracks) {
     return matchCount >= Math.min(2, words.length);
   });
 
-  // Deduplicate by normalized title + artist
+  const sorted = filtered
+    .map(track => ({ track, score: scoreTrack(words, normalizedQuery, track) }))
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.track);
+
   const dedupMap = new Map();
-  for (const track of filtered) {
+  for (const track of sorted) {
     const key = `${normalizeTitle(track.title)}::${track.artist.toLowerCase()}`;
     if (!dedupMap.has(key)) dedupMap.set(key, track);
   }
