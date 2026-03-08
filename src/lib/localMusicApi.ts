@@ -382,9 +382,8 @@ export const getAlbumProfile = async (
         };
       }
     } catch {
-      console.log('[AlbumProfile] Local server unavailable, using iTunes fallback...');
+      console.log('[AlbumProfile] Server unavailable, using iTunes fallback...');
     }
-  }
 
   try {
     const lookupRes = await withTimeout(`https://itunes.apple.com/lookup?id=${encodeURIComponent(albumId)}&entity=song`, 12000);
