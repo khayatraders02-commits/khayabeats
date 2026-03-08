@@ -820,6 +820,27 @@ setInterval(() => {
   if (deleted > 0) console.log(`[CLEANUP] Removed ${deleted} old files`);
 }, CONFIG.CACHE_CLEANUP_INTERVAL);
 
+// ==================== KEEP-ALIVE SELF-PING ====================
+// Prevents Render free tier from spinning down after 15 min of inactivity
+const KEEP_ALIVE_INTERVAL = 13 * 60 * 1000; // 13 minutes (under 15 min limit)
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL; // Render sets this automatically
+
+if (RENDER_URL) {
+  setInterval(async () => {
+    try {
+      const res = await fetch(`${RENDER_URL}/health`);
+      if (res.ok) {
+        console.log(`[KEEP-ALIVE] Pinged ${RENDER_URL}/health — OK`);
+      }
+    } catch (e) {
+      console.log(`[KEEP-ALIVE] Ping failed: ${e.message}`);
+    }
+  }, KEEP_ALIVE_INTERVAL);
+  console.log(`[KEEP-ALIVE] Self-ping enabled every 13 minutes`);
+} else {
+  console.log(`[KEEP-ALIVE] Not on Render (RENDER_EXTERNAL_URL not set), skipping self-ping`);
+}
+
 // ==================== START ====================
 
 app.listen(PORT, () => {
