@@ -1,18 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 
-// Default server URL - runs on user's local PC
-const DEFAULT_SERVER_URL = 'http://localhost:3001';
+// Remote server URL (set after deploying to Render/Railway/etc.)
+// Falls back to localhost for local development
+const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || '';
+const LOCAL_SERVER_URL = 'http://localhost:3001';
 
-const canUseLocalServerFromCurrentClient = () => {
+const getServerUrl = () => {
+  // If a remote URL is configured, always prefer it
+  if (REMOTE_SERVER_URL) return REMOTE_SERVER_URL;
+  // Otherwise fall back to local
+  return LOCAL_SERVER_URL;
+};
+
+const canReachServer = () => {
+  const url = getServerUrl();
+  // Remote URLs are always reachable
+  if (url !== LOCAL_SERVER_URL) return true;
+  // Local server only reachable from localhost/native
   if (typeof window === 'undefined') return true;
-
   const host = window.location.hostname;
   const protocol = window.location.protocol;
-
   if (protocol === 'file:') return true;
   if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return true;
-
-  // Cloud previews cannot reach the user's localhost machine.
   return false;
 };
 
@@ -30,10 +39,12 @@ interface ServerStatus {
 }
 
 export const useServerStatus = () => {
+  const serverUrl = getServerUrl();
+
   const [status, setStatus] = useState<ServerStatus>({
     isOnline: false,
     isChecking: true,
-    serverUrl: DEFAULT_SERVER_URL,
+    serverUrl,
     lastChecked: null,
     cacheStats: null,
     isReachableFromClient: true,
@@ -41,7 +52,7 @@ export const useServerStatus = () => {
   });
 
   const checkServerHealth = useCallback(async () => {
-    if (!canUseLocalServerFromCurrentClient()) {
+    if (!canReachServer()) {
       setStatus((prev) => ({
         ...prev,
         isOnline: false,
@@ -60,7 +71,7 @@ export const useServerStatus = () => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch(`${DEFAULT_SERVER_URL}/health`, {
+      const response = await fetch(`${serverUrl}/health`, {
         signal: controller.signal,
         mode: 'cors',
       });
@@ -75,7 +86,7 @@ export const useServerStatus = () => {
       setStatus({
         isOnline: true,
         isChecking: false,
-        serverUrl: DEFAULT_SERVER_URL,
+        serverUrl,
         lastChecked: new Date(),
         cacheStats: data.cache || null,
         isReachableFromClient: true,
@@ -94,25 +105,21 @@ export const useServerStatus = () => {
       }));
       return false;
     }
-  }, []);
+  }, [serverUrl]);
 
-  // Check on mount and periodically
   useEffect(() => {
     checkServerHealth();
-
-    // Check every 30 seconds
     const interval = setInterval(checkServerHealth, 30000);
-
     return () => clearInterval(interval);
   }, [checkServerHealth]);
 
   return {
     ...status,
     checkServerHealth,
-    getStreamUrl: (videoId: string) => `${DEFAULT_SERVER_URL}/stream/${videoId}`,
-    getAudioUrlEndpoint: () => `${DEFAULT_SERVER_URL}/audio-url`,
+    getStreamUrl: (videoId: string) => `${serverUrl}/stream/${videoId}`,
+    getAudioUrlEndpoint: () => `${serverUrl}/audio-url`,
   };
 };
 
-// Export for use in edge function
-export const SERVER_URL = DEFAULT_SERVER_URL;
+// Export for use elsewhere
+export const SERVER_URL = getServerUrl();
