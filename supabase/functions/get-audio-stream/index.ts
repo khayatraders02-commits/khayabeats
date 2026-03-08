@@ -275,11 +275,7 @@ serve(async (req) => {
       result = await tryInvidious(videoId);
     }
 
-    // 5. Audius
-    if (!result && title) {
-      console.log(`[5/5] Audius...`);
-      result = await tryAudius(title, artist);
-    }
+    // 5. (Audius removed)
 
     if (!result) {
       console.error("❌ All sources failed");
