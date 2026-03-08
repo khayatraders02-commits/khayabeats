@@ -119,7 +119,7 @@ const Auth = () => {
     }
   };
 
-
+  if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <motion.div 
