@@ -715,72 +715,117 @@ app.get('/cookies-status', (req, res) => {
 });
 
 // OAuth setup — initiates the OAuth device flow
-// Call this endpoint, then follow the URL printed in server logs
 app.post('/oauth-setup', async (req, res) => {
   try {
     console.log('[OAUTH] Starting OAuth device flow...');
     
-    const proc = spawn(CONFIG.YT_DLP_PATH, [
-      '--username', 'oauth',
-      '--password', '',
-      '--cache-dir', CONFIG.OAUTH_CACHE_DIR,
-      '-s', // simulate only, don't download
-      'https://www.youtube.com/watch?v=dQw4w9WcXgQ', // any video
-    ]);
+    // Try oauth2 first (TV device flow), then fall back to oauth
+    const authMethods = ['oauth2', 'oauth'];
     
-    let output = '';
-    let authUrl = null;
-    let authCode = null;
+    for (const method of authMethods) {
+      console.log(`[OAUTH] Trying method: ${method}`);
+      
+      const result = await new Promise((resolve) => {
+        const proc = spawn(CONFIG.YT_DLP_PATH, [
+          '--username', method,
+          '--password', '',
+          '--cache-dir', CONFIG.OAUTH_CACHE_DIR,
+          '--verbose',
+          '-s',
+          'https://www.youtube.com/watch?v=dQw4w9WcXgQ',
+        ]);
+        
+        let output = '';
+        let authCode = null;
+        let resolved = false;
+        
+        const handleData = (data) => {
+          const text = data.toString();
+          output += text;
+          console.log(`[OAUTH][${method}] ${text.trim()}`);
+          
+          // Match various code patterns yt-dlp might output
+          const patterns = [
+            /enter code\s+([A-Z0-9][-A-Z0-9]+)/i,
+            /user code[:\s]+([A-Z0-9][-A-Z0-9]+)/i,
+            /code[:\s]+([A-Z]{3,4}-[A-Z]{3,4}-[A-Z]{3,4})/i,
+            /([A-Z]{3,4}-[A-Z]{3,4}-[A-Z]{3,4})/,
+          ];
+          
+          for (const pat of patterns) {
+            const m = text.match(pat);
+            if (m && !resolved) {
+              authCode = m[1];
+              resolved = true;
+              resolve({ success: true, code: authCode, method, proc, output });
+              return;
+            }
+          }
+        };
+        
+        proc.stdout.on('data', handleData);
+        proc.stderr.on('data', handleData);
+        
+        // Wait up to 30 seconds for auth code
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            proc.kill();
+            resolve({ success: false, method, output });
+          }
+        }, 30000);
+        
+        proc.on('close', () => {
+          if (!resolved) {
+            resolved = true;
+            resolve({ success: false, method, output });
+          }
+        });
+      });
+      
+      if (result.success) {
+        console.log(`[OAUTH] ✅ Got auth code: ${result.code} via ${result.method}`);
+        
+        res.json({
+          success: true,
+          message: 'OAuth flow started! Go to the URL below and enter the code.',
+          url: 'https://www.google.com/device',
+          code: result.code,
+          method: result.method,
+          instructions: [
+            '1. Open https://www.google.com/device in your browser',
+            `2. Enter code: ${result.code}`,
+            '3. Sign in with your Google account (jumbomamb@gmail.com)',
+            '4. Click Allow when prompted',
+            '5. After authorizing, songs should work within 30 seconds',
+          ],
+        });
+        
+        // Let the process continue to complete auth
+        if (result.proc) {
+          result.proc.on('close', (code) => {
+            if (code === 0) {
+              CONFIG.USE_OAUTH = true;
+              console.log('[OAUTH] ✅ OAuth setup completed! Refresh token cached.');
+            } else {
+              console.log(`[OAUTH] Process exited with code ${code}`);
+            }
+          });
+        }
+        return;
+      }
+      
+      console.log(`[OAUTH] Method ${result.method} failed. Output: ${result.output.slice(-300)}`);
+    }
     
-    proc.stdout.on('data', d => { output += d.toString(); });
-    proc.stderr.on('data', d => { 
-      const text = d.toString();
-      output += text;
-      // Look for the auth URL and code
-      const codeMatch = text.match(/enter code\s+([A-Z0-9-]+)/i);
-      if (codeMatch) authCode = codeMatch[1];
-      if (text.includes('google.com/device')) authUrl = 'https://www.google.com/device';
+    // Both methods failed
+    res.json({
+      success: false,
+      message: 'Could not start OAuth flow. Your yt-dlp version may not support OAuth device flow.',
+      hint: 'Try updating yt-dlp: the Dockerfile should download the latest release.',
+      alternative: 'You can export cookies from your browser and upload them via POST /upload-cookies instead.',
     });
     
-    // Wait a few seconds for the auth prompt
-    await new Promise(r => setTimeout(r, 10000));
-    
-    if (authCode) {
-      console.log(`[OAUTH] Auth code: ${authCode}`);
-      console.log(`[OAUTH] Go to: https://www.google.com/device and enter the code`);
-      
-      res.json({
-        success: true,
-        message: 'OAuth flow started! Go to the URL below and enter the code.',
-        url: 'https://www.google.com/device',
-        code: authCode,
-        instructions: [
-          '1. Open https://www.google.com/device in your browser',
-          `2. Enter code: ${authCode}`,
-          '3. Sign in with a YouTube/Google account (use a throwaway account, NOT your main one)',
-          '4. After authorizing, the server will automatically cache the refresh token',
-          '5. Songs should start playing within 30 seconds',
-        ],
-      });
-      
-      // Let the process continue to complete the auth flow
-      proc.on('close', (code) => {
-        if (code === 0) {
-          CONFIG.USE_OAUTH = true;
-          console.log('[OAUTH] ✅ OAuth setup completed! Refresh token cached.');
-        } else {
-          console.log(`[OAUTH] Process exited with code ${code}. Check if you completed the auth in browser.`);
-        }
-      });
-    } else {
-      proc.kill();
-      // Maybe OAuth is already set up
-      res.json({
-        success: false,
-        message: 'Could not start OAuth flow. OAuth may already be configured, or yt-dlp version may not support it.',
-        output: output.slice(-500),
-      });
-    }
   } catch (error) {
     console.error('[OAUTH ERROR]', error.message);
     res.status(500).json({ success: false, error: error.message });
