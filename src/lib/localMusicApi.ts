@@ -354,15 +354,15 @@ export const getAlbumProfile = async (
   albumTitleHint?: string,
   artistHint?: string
 ): Promise<AlbumProfileResponse> => {
-  if (canUseLocalServerFromCurrentClient()) {
-    try {
-      const params = new URLSearchParams();
-      if (albumTitleHint) params.set('title', albumTitleHint);
-      if (artistHint) params.set('artist', artistHint);
+  const serverUrl = getServerUrl();
+  try {
+    const params = new URLSearchParams();
+    if (albumTitleHint) params.set('title', albumTitleHint);
+    if (artistHint) params.set('artist', artistHint);
 
-      const res = await fetch(`${LOCAL_SERVER_URL}/albums/${encodeURIComponent(albumId)}?${params.toString()}`, {
-        signal: AbortSignal.timeout(12000),
-      });
+    const res = await fetch(`${serverUrl}/albums/${encodeURIComponent(albumId)}?${params.toString()}`, {
+      signal: AbortSignal.timeout(12000),
+    });
 
       if (res.ok) {
         const data = await res.json();
