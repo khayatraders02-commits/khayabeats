@@ -1,0 +1,12 @@
+# Render Blueprint — deploy with "New > Blueprint" at https://dashboard.render.com
+services:
+  - type: web
+    name: khayabeats-server
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 3001
+    healthCheckPath: /health
+    autoDeploy: true
