@@ -714,6 +714,100 @@ app.get('/cookies-status', (req, res) => {
   });
 });
 
+// OAuth setup — initiates the OAuth device flow
+// Call this endpoint, then follow the URL printed in server logs
+app.post('/oauth-setup', async (req, res) => {
+  try {
+    console.log('[OAUTH] Starting OAuth device flow...');
+    
+    const proc = spawn(CONFIG.YT_DLP_PATH, [
+      '--username', 'oauth',
+      '--password', '',
+      '--cache-dir', CONFIG.OAUTH_CACHE_DIR,
+      '-s', // simulate only, don't download
+      'https://www.youtube.com/watch?v=dQw4w9WcXgQ', // any video
+    ]);
+    
+    let output = '';
+    let authUrl = null;
+    let authCode = null;
+    
+    proc.stdout.on('data', d => { output += d.toString(); });
+    proc.stderr.on('data', d => { 
+      const text = d.toString();
+      output += text;
+      // Look for the auth URL and code
+      const codeMatch = text.match(/enter code\s+([A-Z0-9-]+)/i);
+      if (codeMatch) authCode = codeMatch[1];
+      if (text.includes('google.com/device')) authUrl = 'https://www.google.com/device';
+    });
+    
+    // Wait a few seconds for the auth prompt
+    await new Promise(r => setTimeout(r, 10000));
+    
+    if (authCode) {
+      console.log(`[OAUTH] Auth code: ${authCode}`);
+      console.log(`[OAUTH] Go to: https://www.google.com/device and enter the code`);
+      
+      res.json({
+        success: true,
+        message: 'OAuth flow started! Go to the URL below and enter the code.',
+        url: 'https://www.google.com/device',
+        code: authCode,
+        instructions: [
+          '1. Open https://www.google.com/device in your browser',
+          `2. Enter code: ${authCode}`,
+          '3. Sign in with a YouTube/Google account (use a throwaway account, NOT your main one)',
+          '4. After authorizing, the server will automatically cache the refresh token',
+          '5. Songs should start playing within 30 seconds',
+        ],
+      });
+      
+      // Let the process continue to complete the auth flow
+      proc.on('close', (code) => {
+        if (code === 0) {
+          CONFIG.USE_OAUTH = true;
+          console.log('[OAUTH] ✅ OAuth setup completed! Refresh token cached.');
+        } else {
+          console.log(`[OAUTH] Process exited with code ${code}. Check if you completed the auth in browser.`);
+        }
+      });
+    } else {
+      proc.kill();
+      // Maybe OAuth is already set up
+      res.json({
+        success: false,
+        message: 'Could not start OAuth flow. OAuth may already be configured, or yt-dlp version may not support it.',
+        output: output.slice(-500),
+      });
+    }
+  } catch (error) {
+    console.error('[OAUTH ERROR]', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Check auth status
+app.get('/auth-status', (req, res) => {
+  const hasCookies = fs.existsSync(COOKIES_PATH);
+  const hasOAuthCache = fs.existsSync(path.join(CONFIG.OAUTH_CACHE_DIR, 'youtube-nsig'));
+  
+  // Check if OAuth token files exist in cache
+  let hasOAuthToken = false;
+  try {
+    const cacheFiles = fs.readdirSync(CONFIG.OAUTH_CACHE_DIR);
+    hasOAuthToken = cacheFiles.some(f => f.includes('oauth') || f.includes('token'));
+  } catch {}
+  
+  res.json({
+    method: CONFIG.USE_OAUTH ? 'oauth' : hasCookies ? 'cookies' : 'none',
+    oauthConfigured: CONFIG.USE_OAUTH || hasOAuthToken,
+    cookiesConfigured: hasCookies,
+    oauthRefreshTokenSet: Boolean(CONFIG.OAUTH_REFRESH_TOKEN),
+    status: (CONFIG.USE_OAUTH || hasOAuthToken) ? 'authenticated' : hasCookies ? 'cookies-mode' : 'unauthenticated',
+  });
+});
+
 app.post('/cache/cleanup', (req, res) => {
   const { maxAgeDays = 30 } = req.body;
   const deleted = cleanupCache(maxAgeDays);
