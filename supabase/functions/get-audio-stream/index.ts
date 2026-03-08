@@ -97,8 +97,10 @@ async function tryCobalt(videoId: string): Promise<{ url: string; mimeType: stri
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
   // Only instance confirmed UP from piped-instances.kavin.rocks
   const instances = [
+    "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
     "https://pipedapi.leptons.xyz",
+    "https://piped.ezero.space",
   ];
 
   for (const instance of instances) {
