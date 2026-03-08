@@ -135,6 +135,7 @@ function runYtDlpDownload(videoId) {
       '--concurrent-fragments', '1',
       '--force-ipv4',
       '--no-part',
+      '--extractor-arg', 'youtube:player_client=ios,web',
       ...getAuthArgs(),
     ];
 
