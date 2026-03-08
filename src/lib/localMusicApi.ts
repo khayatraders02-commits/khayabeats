@@ -189,6 +189,11 @@ const rankTracks = (query: string, tracks: Track[]): Track[] => {
   const filtered = tracks.filter((track) => {
     const text = `${track.title} ${track.artist}`;
     if (JUNK_PATTERNS.some((pattern) => pattern.test(text))) return false;
+    // Filter out tracks longer than 10 minutes (600s) — likely compilations/mixes
+    const dur = parseDurationToSeconds(track.duration);
+    if (dur && dur > 600) return false;
+    // Filter out very short clips too
+    if (dur && dur < 30) return false;
     if (words.length === 0) return true;
     const lower = text.toLowerCase();
     const matchCount = words.filter((w) => lower.includes(w)).length;
