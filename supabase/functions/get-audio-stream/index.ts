@@ -9,6 +9,17 @@ const corsHeaders = {
 const YT_SERVER_URL = Deno.env.get("KHAYABEATS_SERVER_URL") || "";
 
 // ── Source 1: Private yt-dlp server ──
+async function wakeServer(): Promise<boolean> {
+  if (!YT_SERVER_URL) return false;
+  try {
+    console.log(`[YT-Server] Waking server...`);
+    const r = await fetch(`${YT_SERVER_URL}/health`, { signal: AbortSignal.timeout(55000) });
+    const ok = r.ok;
+    console.log(`[YT-Server] Wake ${ok ? "OK" : "FAIL " + r.status}`);
+    return ok;
+  } catch (e) { console.log(`[YT-Server] Wake failed: ${(e as Error).message}`); return false; }
+}
+
 async function tryYTServer(videoId: string, title?: string, artist?: string): Promise<{ url: string; mimeType: string } | null> {
   if (!YT_SERVER_URL) return null;
   try {
