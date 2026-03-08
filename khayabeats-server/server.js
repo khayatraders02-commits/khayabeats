@@ -504,7 +504,7 @@ app.post('/audio-url', async (req, res) => {
 
     return res.json({
       success: true,
-      audioUrl: `http://localhost:${PORT}/stream/${videoId}`,
+      audioUrl: `${req.protocol}://${req.get('host')}/stream/${videoId}`,
       cached: wasCached,
     });
   } catch (error) {
