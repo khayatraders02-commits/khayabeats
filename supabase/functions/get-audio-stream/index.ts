@@ -84,12 +84,10 @@ async function tryCobalt(videoId: string): Promise<{ url: string; mimeType: stri
 
 // ── Source 3: Piped (YouTube proxy) ──
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // Fetched live from piped-instances.kavin.rocks - only ones that are actually UP
+  // Only instance confirmed UP from piped-instances.kavin.rocks
   const instances = [
+    "https://api.piped.private.coffee",
     "https://pipedapi.leptons.xyz",
-    "https://pipedapi.nosebs.ru",
-    "https://piped-api.privacy.com.de",
-    "https://api.piped.yt",
   ];
 
   for (const instance of instances) {
