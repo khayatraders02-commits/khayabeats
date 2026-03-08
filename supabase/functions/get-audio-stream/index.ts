@@ -291,8 +291,9 @@ serve(async (req) => {
         }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
 
-    // Build proxied URL for browser playback (avoid CORS issues)
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const isLocalUrl = result.url.includes("localhost") || result.url.includes("127.0.0.1");
     const proxyEndpoint = isLocalUrl
