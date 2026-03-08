@@ -285,10 +285,13 @@ serve(async (req) => {
       console.error("❌ All sources failed");
       return new Response(
         JSON.stringify({
-          error: "Unable to stream this track. Try a different song or check if the server is running.",
+          error: "Start your KhayaBeats server on your PC to play this track. All public audio sources are currently unavailable for mainstream music.",
           serverOnline: false,
           success: false,
         }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

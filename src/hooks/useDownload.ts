@@ -121,7 +121,7 @@ export const useDownload = () => {
         });
 
         if (error || !data?.success || !data?.audioUrl) {
-          throw new Error(data?.error || 'Could not find audio source. Make sure the local server is running.');
+          throw new Error('Start the KhayaBeats server on your PC to download songs. Run "npm run dev" in the khayabeats-server folder.');
         }
 
         // Don't use localhost URLs from edge function (they can't be reached from browser)
