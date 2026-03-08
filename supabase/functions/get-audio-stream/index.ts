@@ -144,51 +144,7 @@ async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: s
   return null;
 }
 
-// ── Source 5: Audius (indie/decentralized) ──
-async function tryAudius(title: string, artist?: string): Promise<{ url: string; mimeType: string; trackInfo?: any } | null> {
-  const nodes = [
-    "https://discoveryprovider.audius.co",
-    "https://discoveryprovider2.audius.co",
-    "https://discoveryprovider3.audius.co",
-  ];
-
-  for (const node of nodes) {
-    try {
-      const health = await fetch(`${node}/health_check`, { signal: AbortSignal.timeout(2000) });
-      if (!health.ok) { await health.text(); continue; }
-      await health.text();
-
-      let query = title
-        .replace(/\(Official.*?\)/gi, '').replace(/\[.*?\]/gi, '')
-        .replace(/\(Audio\)/gi, '').replace(/\(Lyrics\)/gi, '')
-        .replace(/ft\..*/gi, '').replace(/feat\..*/gi, '').trim();
-      if (artist) query = `${artist} ${query}`.trim();
-
-      console.log(`[Audius] Searching: "${query}"`);
-      const r = await fetch(
-        `${node}/v1/tracks/search?query=${encodeURIComponent(query)}&limit=10&app_name=KHAYABEATS`,
-        { signal: AbortSignal.timeout(8000) }
-      );
-      if (!r.ok) { await r.text(); continue; }
-      const data = await r.json();
-      const tracks = (data.data || []).filter((t: any) => !t.is_delete && t.is_available);
-      if (tracks.length === 0) { console.log(`[Audius] No tracks found`); continue; }
-
-      const track = tracks.find((t: any) => !/cover|remix|instrumental|karaoke|tribute|bootleg/i.test(t.title || '')) || tracks[0];
-      if (!track) continue;
-
-      console.log(`✓ [Audius] Found: "${track.title}" by ${track.user?.name}`);
-      return {
-        url: `${node}/v1/tracks/${track.id}/stream?app_name=KHAYABEATS`,
-        mimeType: "audio/mpeg",
-        trackInfo: { title: track.title, artist: track.user?.name, source: "audius" },
-      };
-    } catch (e) {
-      console.log(`[Audius] ${node}: ${(e as Error).message}`);
-    }
-  }
-  return null;
-}
+// (Audius source removed)
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
