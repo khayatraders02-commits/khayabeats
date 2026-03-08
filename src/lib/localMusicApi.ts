@@ -11,15 +11,6 @@ const getServerUrl = () => {
   return REMOTE_SERVER_URL;
 };
 
-const canUseLocalServerFromCurrentClient = () => {
-  if (typeof window === 'undefined') return true;
-
-  const host = window.location.hostname;
-  const protocol = window.location.protocol;
-
-  if (protocol === 'file:') return true;
-  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
-};
 
 export interface ArtistSearchResult {
   id: string;
