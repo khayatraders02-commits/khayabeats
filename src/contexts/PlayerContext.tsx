@@ -234,7 +234,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
             }
             
             if (!data?.success || !data?.audioUrl) {
-              throw new Error(data?.error || 'Server offline - start your local server');
+              throw new Error(data?.error || 'Start the KhayaBeats server on your PC to play music');
             }
             
             audioSource = data.audioUrl;
