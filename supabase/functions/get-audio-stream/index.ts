@@ -291,10 +291,6 @@ serve(async (req) => {
         }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
-    }
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
 
     // Build proxied URL for browser playback (avoid CORS issues)
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
