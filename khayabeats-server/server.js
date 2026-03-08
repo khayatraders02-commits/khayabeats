@@ -329,6 +329,12 @@ const JUNK_PATTERNS = [
   /instrumental/i, /karaoke/i, /\b8d\b/i, /fan\s*made/i, /nightcore/i,
   /remake/i, /reimagined/i, /tribute/i, /\btype\s*beat\b/i, /\bmashup\b/i,
   /\breverb\b/i, /\bletra\b/i, /\bsped\s*and\s*pitched\b/i,
+  /\btop\s*\d+\b/i, /\bbest\s*(of|hits)\b/i, /\bmix\b/i, /\bmegamix\b/i,
+  /\bplaylist\b/i, /\bcompilation\b/i, /\bnonstop\b/i, /\bnon[\s-]*stop\b/i,
+  /\bmedley\b/i, /\bcollection\b/i, /\bgreatest\s*hits\b/i,
+  /\ball\s*songs\b/i, /\bfull\s*album\b/i, /\b1\s*hour\b/i, /\b2\s*hour/i,
+  /\b3\s*hour/i, /\bhour\s*long\b/i, /\bhours?\b/i,
+  /\bbest\s*songs?\s*\d{4}/i, /\bhits\s*\d{4}/i,
 ];
 const OFFICIAL_HINT_PATTERNS = [/official\s*(audio|video)?/i, /\bvevo\b/i, /-\s*topic\b/i];
 const STOP_WORDS = new Set(['official', 'audio', 'video', 'lyrics', 'song', 'music', 'the', 'a', 'an', 'and', '&']);
@@ -384,6 +390,11 @@ function rankTracks(query, tracks) {
   const filtered = tracks.filter(track => {
     const text = `${track.title} ${track.artist}`;
     if (JUNK_PATTERNS.some(p => p.test(text))) return false;
+    // Filter out tracks longer than 10 minutes (600s) — likely compilations/mixes
+    const dur = parseDurationToSeconds(track.duration);
+    if (dur && dur > 600) return false;
+    // Filter out very short clips too
+    if (dur && dur < 30) return false;
     if (words.length === 0) return true;
     const lower = text.toLowerCase();
     return words.filter(w => lower.includes(w)).length >= Math.min(2, words.length);

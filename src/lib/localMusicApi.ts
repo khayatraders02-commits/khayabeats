@@ -85,6 +85,26 @@ const JUNK_PATTERNS = [
   /\breverb\b/i,
   /\bletra\b/i,
   /\bsped\s*and\s*pitched\b/i,
+  /\btop\s*\d+\b/i,
+  /\bbest\s*(of|hits)\b/i,
+  /\bmix\b/i,
+  /\bmegamix\b/i,
+  /\bplaylist\b/i,
+  /\bcompilation\b/i,
+  /\bnonstop\b/i,
+  /\bnon[\s-]*stop\b/i,
+  /\bmedley\b/i,
+  /\bcollection\b/i,
+  /\bgreatest\s*hits\b/i,
+  /\ball\s*songs\b/i,
+  /\bfull\s*album\b/i,
+  /\b1\s*hour\b/i,
+  /\b2\s*hour/i,
+  /\b3\s*hour/i,
+  /\bhour\s*long\b/i,
+  /\bhours?\b/i,
+  /\bbest\s*songs?\s*\d{4}/i,
+  /\bhits\s*\d{4}/i,
 ];
 
 const OFFICIAL_HINT_PATTERNS = [/official\s*(audio|video)?/i, /\bvevo\b/i, /-\s*topic\b/i];
@@ -169,6 +189,11 @@ const rankTracks = (query: string, tracks: Track[]): Track[] => {
   const filtered = tracks.filter((track) => {
     const text = `${track.title} ${track.artist}`;
     if (JUNK_PATTERNS.some((pattern) => pattern.test(text))) return false;
+    // Filter out tracks longer than 10 minutes (600s) — likely compilations/mixes
+    const dur = parseDurationToSeconds(track.duration);
+    if (dur && dur > 600) return false;
+    // Filter out very short clips too
+    if (dur && dur < 30) return false;
     if (words.length === 0) return true;
     const lower = text.toLowerCase();
     const matchCount = words.filter((w) => lower.includes(w)).length;

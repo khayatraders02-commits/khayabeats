@@ -46,8 +46,22 @@ const extractArtist = (title: string, channelTitle: string): { artist: string; c
   return { artist: cleanChannel || "Unknown Artist", cleanTitle: title };
 };
 
+// Junk title patterns — compilations, mixes, playlists
+const JUNK_TITLE_PATTERNS = [
+  /\btop\s*\d+\b/i, /\bbest\s*(of|hits)\b/i, /\bmix\b/i, /\bmegamix\b/i,
+  /\bplaylist\b/i, /\bcompilation\b/i, /\bnonstop\b/i, /\bnon[\s-]*stop\b/i,
+  /\bmedley\b/i, /\bcollection\b/i, /\bgreatest\s*hits\b/i,
+  /\ball\s*songs\b/i, /\bfull\s*album\b/i, /\b1\s*hour\b/i, /\b2\s*hour/i,
+  /\b3\s*hour/i, /\bhours?\b/i, /\bbest\s*songs?\s*\d{4}/i, /\bhits\s*\d{4}/i,
+  /slowed/i, /sped\s*up/i, /remix/i, /cover/i, /\blive\b/i, /reaction/i,
+  /instrumental/i, /karaoke/i, /\b8d\b/i, /nightcore/i, /tribute/i,
+];
+
 // Filter out long videos (likely mixes/compilations) 
-const isValidTrack = (duration: string): boolean => {
+const isValidTrack = (duration: string, title: string): boolean => {
+  // Check title patterns
+  if (JUNK_TITLE_PATTERNS.some(p => p.test(title))) return false;
+  
   const parts = duration.split(':').map(Number);
   let totalSeconds = 0;
   
@@ -59,8 +73,8 @@ const isValidTrack = (duration: string): boolean => {
     return true;
   }
   
-  // Filter out videos longer than 12 minutes (likely mixes/compilations)
-  return totalSeconds > 30 && totalSeconds < 720;
+  // Filter out videos longer than 10 minutes or shorter than 30 seconds
+  return totalSeconds > 30 && totalSeconds < 600;
 };
 
 // PRIMARY: YouTube Data API
@@ -132,7 +146,7 @@ async function searchYouTubeAPI(query: string, maxResults: number): Promise<any[
           duration,
         };
       })
-      .filter((track: any) => isValidTrack(track.duration))
+      .filter((track: any) => isValidTrack(track.duration, track.title))
       .slice(0, maxResults);
 
     console.log(`YouTube API returned ${results.length} results`);
@@ -175,7 +189,7 @@ async function searchPipedAPI(query: string, maxResults: number): Promise<any[]>
       if (!data.items || data.items.length === 0) continue;
       
       const results = data.items
-        .filter((item: any) => item.type === "stream" && item.duration > 30 && item.duration < 720)
+        .filter((item: any) => item.type === "stream" && item.duration > 30 && item.duration < 600 && !JUNK_TITLE_PATTERNS.some(p => p.test(item.title || '')))
         .slice(0, maxResults)
         .map((item: any) => {
           // Extract video ID from URL
@@ -241,7 +255,7 @@ async function searchInvidiousAPI(query: string, maxResults: number): Promise<an
       if (!Array.isArray(data) || data.length === 0) continue;
       
       const results = data
-        .filter((item: any) => item.type === "video" && item.lengthSeconds > 30 && item.lengthSeconds < 720)
+        .filter((item: any) => item.type === "video" && item.lengthSeconds > 30 && item.lengthSeconds < 600 && !JUNK_TITLE_PATTERNS.some(p => p.test(item.title || '')))
         .slice(0, maxResults)
         .map((item: any) => {
           const { artist, cleanTitle } = extractArtist(item.title || '', item.author || '');
