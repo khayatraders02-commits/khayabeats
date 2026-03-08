@@ -17,6 +17,8 @@ const Queue = require('better-queue');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+
 const CONFIG = {
   CACHE_DIR: path.join(__dirname, 'storage', 'music-cache'),
   TEMP_DIR: path.join(__dirname, 'storage', 'temp'),
@@ -28,6 +30,7 @@ const CONFIG = {
   MAX_DOWNLOAD_ATTEMPTS: 3,
   RETRY_BACKOFF_MS: 1500,
   YT_DLP_PATH: getYtDlpPath(),
+  COOKIES_FILE: fs.existsSync(COOKIES_PATH) ? COOKIES_PATH : null,
 };
 
 [CONFIG.CACHE_DIR, CONFIG.TEMP_DIR].forEach(dir => {
