@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
   Settings, ChevronRight, User, Bell, Shield, FileText, 
-  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone, RefreshCw, Clock, Disc3
+  HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone, RefreshCw, Clock, Disc3,
+  Server, Upload, CheckCircle, XCircle, Loader2
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,7 @@ import { useOnboarding } from '@/components/Onboarding';
 import { useAudioQuality, AUDIO_QUALITY_OPTIONS } from '@/hooks/useAudioQuality';
 import { SleepTimerSheet } from '@/components/SleepTimerSheet';
 import { AudioQualitySheet } from '@/components/AudioQualitySheet';
+import { useServerStatus } from '@/hooks/useServerStatus';
 
 export const SettingsPage = () => {
   const { user, signOut } = useAuth();
