@@ -203,8 +203,9 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
           let localServerOnline = false;
           
           try {
-            console.log('[LocalServer] Trying local yt-dlp server...');
-            const localResponse = await fetch(`${LOCAL_SERVER_URL}/audio-url`, {
+            console.log('[Server] Trying yt-dlp server...');
+            const serverUrl = getAudioServerUrl();
+            const localResponse = await fetch(`${serverUrl}/audio-url`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ 
