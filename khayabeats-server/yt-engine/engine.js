@@ -184,6 +184,10 @@ function runYtDlpDownload(videoId) {
       '--no-part',
     ];
 
+    if (CONFIG.COOKIES_FILE) {
+      args.push('--cookies', CONFIG.COOKIES_FILE);
+    }
+
     console.log(`[DOWNLOAD] Starting: ${videoId}`);
 
     const process = spawn(CONFIG.YT_DLP_PATH, args);
