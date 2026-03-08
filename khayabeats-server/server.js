@@ -1,14 +1,18 @@
 /**
- * KHAYABEATS Main API Server
+ * KHAYABEATS Server v3.0
  * 
- * Run with: npm start
+ * Single-process server: API + yt-dlp engine combined.
+ * No separate engine process needed — just `npm start`.
  */
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { spawn, exec } = require('child_process');
 const NodeCache = require('node-cache');
+const Queue = require('better-queue');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -16,20 +20,21 @@ const PORT = process.env.PORT || 3001;
 const CONFIG = {
   CACHE_DIR: path.join(__dirname, 'storage', 'music-cache'),
   TEMP_DIR: path.join(__dirname, 'storage', 'temp'),
-  YT_ENGINE_URL: process.env.YT_ENGINE_URL || 'http://localhost:3002',
   MAX_CACHE_SIZE_GB: 50,
   CACHE_CLEANUP_INTERVAL: 60 * 60 * 1000,
   ITUNES_API: 'https://itunes.apple.com',
+  MAX_CONCURRENT_DOWNLOADS: 6,
+  DOWNLOAD_TIMEOUT: 120000,
+  MAX_DOWNLOAD_ATTEMPTS: 3,
+  RETRY_BACKOFF_MS: 1500,
+  YT_DLP_PATH: getYtDlpPath(),
 };
 
 [CONFIG.CACHE_DIR, CONFIG.TEMP_DIR].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
 const metadataCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 });
-const pendingAudioRequests = new Map();
 
 app.use(cors());
 app.use(express.json());
@@ -39,116 +44,248 @@ app.use((req, res, next) => {
   next();
 });
 
-// ==================== HELPERS ====================
+// ==================== YT-DLP ENGINE (embedded) ====================
 
-function getContentType(ext) {
-  const types = {
-    '.mp3': 'audio/mpeg',
-    '.webm': 'audio/webm',
-    '.m4a': 'audio/mp4',
-    '.opus': 'audio/opus',
-    '.ogg': 'audio/ogg',
-  };
-  return types[ext] || 'audio/mpeg';
+function getYtDlpPath() {
+  const isWindows = os.platform() === 'win32';
+  const localPath = path.join(__dirname, isWindows ? 'yt-dlp.exe' : 'yt-dlp');
+  if (fs.existsSync(localPath)) return localPath;
+  const enginePath = path.join(__dirname, 'yt-engine', isWindows ? 'yt-dlp.exe' : 'yt-dlp');
+  if (fs.existsSync(enginePath)) return enginePath;
+  return 'yt-dlp';
 }
 
-function mapFilePathToCacheEntry(filePath) {
-  const ext = path.extname(filePath);
-  return {
-    filePath,
-    ext,
-    contentType: getContentType(ext),
-  };
-}
+const dlStats = { total: 0, success: 0, failed: 0, active: 0, queued: 0, cacheHits: 0 };
+const inflightDownloads = new Map();
+
+const downloadQueue = new Queue(async (task, cb) => {
+  try {
+    const result = await downloadAudioWithRetry(task.videoId);
+    cb(null, result);
+  } catch (error) {
+    cb(error);
+  }
+}, { concurrent: CONFIG.MAX_CONCURRENT_DOWNLOADS, maxRetries: 0 });
 
 function findCachedFile(videoId) {
   const formats = ['.webm', '.m4a', '.opus', '.mp3', '.ogg'];
   for (const ext of formats) {
     const filePath = path.join(CONFIG.CACHE_DIR, `${videoId}${ext}`);
     if (fs.existsSync(filePath)) {
-      return mapFilePathToCacheEntry(filePath);
+      return { filePath, ext, contentType: getContentType(ext) };
     }
   }
   return null;
 }
 
+function getLatestFileByPrefix(videoId) {
+  try {
+    const prefix = `${videoId}.`;
+    const files = fs.readdirSync(CONFIG.CACHE_DIR)
+      .filter(name => name.startsWith(prefix) && !name.endsWith('.part'));
+    if (files.length === 0) return null;
+    const sorted = files
+      .map(name => {
+        const filePath = path.join(CONFIG.CACHE_DIR, name);
+        const stat = fs.statSync(filePath);
+        return { filePath, mtime: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    return { filePath: sorted[0].filePath, ext: path.extname(sorted[0].filePath) };
+  } catch { return null; }
+}
+
+function runYtDlpDownload(videoId) {
+  return new Promise((resolve, reject) => {
+    const existing = findCachedFile(videoId);
+    if (existing) return resolve({ filePath: existing.filePath, cached: true });
+
+    const outputTemplate = path.join(CONFIG.CACHE_DIR, `${videoId}.%(ext)s`);
+    const args = [
+      `https://www.youtube.com/watch?v=${videoId}`,
+      '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[ext=opus]/bestaudio',
+      '--output', outputTemplate,
+      '--no-playlist',
+      '--no-warnings',
+      '--no-check-certificates',
+      '--ignore-errors',
+      '--socket-timeout', '20',
+      '--retries', '3',
+      '--fragment-retries', '3',
+      '--extractor-retries', '3',
+      '--concurrent-fragments', '1',
+      '--force-ipv4',
+      '--no-part',
+    ];
+
+    console.log(`[DOWNLOAD] Starting: ${videoId}`);
+    const proc = spawn(CONFIG.YT_DLP_PATH, args);
+    let stderr = '';
+    let settled = false;
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill('SIGKILL');
+      reject(new Error('Download timeout'));
+    }, CONFIG.DOWNLOAD_TIMEOUT);
+
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (code !== 0) {
+        const hint = stderr.split('\n').map(s => s.trim()).filter(Boolean).slice(-1)[0] || '';
+        return reject(new Error(hint || `yt-dlp exited with code ${code}`));
+      }
+      const cached = findCachedFile(videoId) || getLatestFileByPrefix(videoId);
+      if (!cached) return reject(new Error('Download completed but file not found'));
+      console.log(`[CACHED] ${path.basename(cached.filePath)}`);
+      resolve({ filePath: cached.filePath, cached: false });
+    });
+    proc.on('error', err => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(new Error(`Failed to start yt-dlp: ${err.message}`));
+    });
+  });
+}
+
+async function downloadAudioWithRetry(videoId) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= CONFIG.MAX_DOWNLOAD_ATTEMPTS; attempt++) {
+    try {
+      if (attempt > 1) console.log(`[RETRY] ${videoId} attempt ${attempt}/${CONFIG.MAX_DOWNLOAD_ATTEMPTS}`);
+      return await runYtDlpDownload(videoId);
+    } catch (error) {
+      lastError = error;
+      if (attempt < CONFIG.MAX_DOWNLOAD_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, CONFIG.RETRY_BACKOFF_MS * attempt));
+      }
+    }
+  }
+  throw lastError || new Error('Download failed');
+}
+
+function enqueueDownload(videoId) {
+  // Check cache first
+  const cached = findCachedFile(videoId);
+  if (cached) {
+    dlStats.cacheHits++;
+    return Promise.resolve(cached);
+  }
+
+  // Deduplicate in-flight requests
+  let promise = inflightDownloads.get(videoId);
+  if (promise) {
+    console.log(`[DEDUPE] Joining in-flight download for ${videoId}`);
+    return promise;
+  }
+
+  dlStats.total++;
+  dlStats.queued++;
+
+  promise = new Promise((resolve, reject) => {
+    downloadQueue.push({ videoId }, (err, result) => {
+      dlStats.queued = Math.max(0, dlStats.queued - 1);
+      if (err) {
+        dlStats.failed++;
+        reject(err);
+      } else {
+        dlStats.success++;
+        resolve(result);
+      }
+    });
+  }).finally(() => {
+    inflightDownloads.delete(videoId);
+  });
+
+  inflightDownloads.set(videoId, promise);
+  console.log(`[QUEUE] ${videoId} queued (${dlStats.queued} in queue)`);
+  return promise;
+}
+
+function searchYouTube(query, limit = 20) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      `ytsearch${limit}:${query}`,
+      '--dump-single-json',
+      '--no-warnings',
+      '--quiet',
+    ];
+    const proc = spawn(CONFIG.YT_DLP_PATH, args);
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', code => {
+      if (code !== 0) {
+        const hint = stderr.split('\n').map(s => s.trim()).filter(Boolean).slice(-1)[0] || '';
+        return reject(new Error(hint || `Search failed with code ${code}`));
+      }
+      try {
+        const json = JSON.parse(stdout || '{}');
+        const entries = Array.isArray(json.entries) ? json.entries : [];
+        const results = entries
+          .filter(e => e && e.id)
+          .map(e => ({
+            id: e.id,
+            videoId: e.id,
+            title: e.title || 'Unknown Title',
+            artist: e.channel || e.uploader || 'Unknown',
+            channelId: e.channel_id || null,
+            thumbnailUrl: `https://i.ytimg.com/vi/${e.id}/mqdefault.jpg`,
+            duration: formatDuration(e.duration),
+            viewCount: e.view_count || 0,
+          }));
+        resolve(results);
+      } catch (error) {
+        reject(new Error(`Failed to parse results: ${error.message}`));
+      }
+    });
+    proc.on('error', err => reject(new Error(`Search error: ${err.message}`)));
+  });
+}
+
+// ==================== HELPERS ====================
+
+function getContentType(ext) {
+  return { '.mp3': 'audio/mpeg', '.webm': 'audio/webm', '.m4a': 'audio/mp4', '.opus': 'audio/opus', '.ogg': 'audio/ogg' }[ext] || 'audio/mpeg';
+}
+
 function streamFile(filePath, contentType, res) {
   const stat = fs.statSync(filePath);
   const range = res.req.headers.range;
-
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
     const start = parseInt(parts[0], 10);
     const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-    const chunksize = (end - start) + 1;
-
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${stat.size}`,
       'Accept-Ranges': 'bytes',
-      'Content-Length': chunksize,
+      'Content-Length': (end - start) + 1,
       'Content-Type': contentType,
     });
-
     fs.createReadStream(filePath, { start, end }).pipe(res);
   } else {
-    res.writeHead(200, {
-      'Content-Length': stat.size,
-      'Content-Type': contentType,
-    });
+    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
     fs.createReadStream(filePath).pipe(res);
   }
 }
 
-async function requestEngineFetch(videoId, title, artist) {
-  const response = await fetch(`${CONFIG.YT_ENGINE_URL}/fetch`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ videoId, title, artist }),
-    signal: AbortSignal.timeout(110000),
-  });
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok || !data?.success) {
-    throw new Error(data?.error || `yt-engine request failed (${response.status})`);
-  }
-
-  return data;
+function formatDuration(seconds) {
+  if (!seconds) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-async function ensureCachedTrack(videoId, title, artist) {
-  const alreadyCached = findCachedFile(videoId);
-  if (alreadyCached) return alreadyCached;
-
-  const existingRequest = pendingAudioRequests.get(videoId);
-  if (existingRequest) {
-    console.log(`[DEDUPE] Waiting for existing fetch ${videoId}`);
-    return existingRequest;
-  }
-
-  const pendingRequest = (async () => {
-    console.log(`[CACHE MISS] Queueing ${videoId}`);
-    const data = await requestEngineFetch(videoId, title, artist);
-
-    const cached = findCachedFile(videoId);
-    if (cached) return cached;
-
-    if (data?.filePath && fs.existsSync(data.filePath)) {
-      return mapFilePathToCacheEntry(data.filePath);
-    }
-
-    throw new Error('Download completed but file not found');
-  })().finally(() => {
-    pendingAudioRequests.delete(videoId);
-  });
-
-  pendingAudioRequests.set(videoId, pendingRequest);
-  return pendingRequest;
+function formatDurationMs(ms) {
+  if (!ms || Number.isNaN(ms)) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  return `${Math.floor(totalSeconds / 60)}:${(totalSeconds % 60).toString().padStart(2, '0')}`;
 }
 
 function getCacheStats() {
@@ -156,17 +293,18 @@ function getCacheStats() {
     const files = fs.readdirSync(CONFIG.CACHE_DIR);
     let totalSize = 0;
     files.forEach(file => {
-      const stat = fs.statSync(path.join(CONFIG.CACHE_DIR, file));
-      totalSize += stat.size;
+      totalSize += fs.statSync(path.join(CONFIG.CACHE_DIR, file)).size;
     });
     return {
       totalFiles: files.length,
       totalSizeMB: Math.round(totalSize / 1024 / 1024),
       totalSizeGB: (totalSize / 1024 / 1024 / 1024).toFixed(2),
       maxSizeGB: CONFIG.MAX_CACHE_SIZE_GB,
-      pendingDownloads: pendingAudioRequests.size,
+      pendingDownloads: inflightDownloads.size,
+      queuedJobs: dlStats.queued,
+      activeDownloads: dlStats.active,
     };
-  } catch (e) {
+  } catch {
     return { error: 'Could not read cache' };
   }
 }
@@ -176,83 +314,47 @@ function cleanupCache(maxAgeDays) {
   const now = Date.now();
   let deleted = 0;
   try {
-    const files = fs.readdirSync(CONFIG.CACHE_DIR);
-    files.forEach(file => {
+    fs.readdirSync(CONFIG.CACHE_DIR).forEach(file => {
       const filePath = path.join(CONFIG.CACHE_DIR, file);
-      const stat = fs.statSync(filePath);
-      if (now - stat.mtimeMs > maxAge) {
-        fs.unlinkSync(filePath);
-        deleted++;
-      }
+      if (now - fs.statSync(filePath).mtimeMs > maxAge) { fs.unlinkSync(filePath); deleted++; }
     });
-  } catch (e) {
-    console.error('Cache cleanup error:', e);
-  }
+  } catch (e) { console.error('Cache cleanup error:', e); }
   return deleted;
 }
 
-// ==================== SEARCH HELPERS ====================
+// ==================== SEARCH / RANKING ====================
 
 const JUNK_PATTERNS = [
-  /slowed/i,
-  /sped\s*up/i,
-  /remix/i,
-  /cover/i,
-  /\blive\b/i,
-  /reaction/i,
-  /instrumental/i,
-  /karaoke/i,
-  /\b8d\b/i,
-  /fan\s*made/i,
-  /nightcore/i,
-  /remake/i,
-  /reimagined/i,
-  /tribute/i,
-  /\btype\s*beat\b/i,
-  /\bmashup\b/i,
-  /\breverb\b/i,
-  /\bletra\b/i,
-  /\bsped\s*and\s*pitched\b/i,
+  /slowed/i, /sped\s*up/i, /remix/i, /cover/i, /\blive\b/i, /reaction/i,
+  /instrumental/i, /karaoke/i, /\b8d\b/i, /fan\s*made/i, /nightcore/i,
+  /remake/i, /reimagined/i, /tribute/i, /\btype\s*beat\b/i, /\bmashup\b/i,
+  /\breverb\b/i, /\bletra\b/i, /\bsped\s*and\s*pitched\b/i,
 ];
-
 const OFFICIAL_HINT_PATTERNS = [/official\s*(audio|video)?/i, /\bvevo\b/i, /-\s*topic\b/i];
-
 const STOP_WORDS = new Set(['official', 'audio', 'video', 'lyrics', 'song', 'music', 'the', 'a', 'an', 'and', '&']);
 
 function normalizeTitle(title) {
-  return title
-    .toLowerCase()
+  return title.toLowerCase()
     .replace(/\(official[^)]*\)/gi, '')
     .replace(/\[(official|lyrics?|hd|4k|audio|video)[^\]]*\]/gi, '')
-    .replace(/[–—-]/g, ' ')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/[–—-]/g, ' ').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function significantWords(query) {
-  return query
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+  return query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP_WORDS.has(w));
 }
 
 function toSlug(value) {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
+  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
 function parseDurationToSeconds(duration) {
   if (!duration || typeof duration !== 'string' || !duration.includes(':')) return null;
-  const parts = duration.split(':').map(p => Number(p));
+  const parts = duration.split(':').map(Number);
   if (parts.some(Number.isNaN)) return null;
-  if (parts.length === 2) return (parts[0] * 60) + parts[1];
-  if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return null;
 }
 
@@ -261,65 +363,45 @@ function scoreTrack(queryWords, normalizedQuery, track) {
   const artist = track.artist || '';
   const combined = `${title} ${artist}`.toLowerCase();
   const normalizedTrackTitle = normalizeTitle(title);
-
   let score = 0;
-
   for (const word of queryWords) {
     if (artist.toLowerCase().includes(word)) score += 10;
     if (title.toLowerCase().includes(word)) score += 7;
   }
-
   if (normalizedTrackTitle.includes(normalizedQuery)) score += 30;
-  if (OFFICIAL_HINT_PATTERNS.some(pattern => pattern.test(combined))) score += 16;
-
+  if (OFFICIAL_HINT_PATTERNS.some(p => p.test(combined))) score += 16;
   const viewCount = Number(track.viewCount || 0);
-  if (viewCount > 0) {
-    score += Math.min(22, Math.log10(viewCount + 1) * 4);
-  }
-
-  const durationSeconds = parseDurationToSeconds(track.duration);
-  if (durationSeconds && durationSeconds < 70) score -= 20;
-  if (durationSeconds && durationSeconds > 120) score += 8;
-
+  if (viewCount > 0) score += Math.min(22, Math.log10(viewCount + 1) * 4);
+  const dur = parseDurationToSeconds(track.duration);
+  if (dur && dur < 70) score -= 20;
+  if (dur && dur > 120) score += 8;
   return score;
 }
 
-/**
- * Filter, deduplicate and rank tracks
- */
 function rankTracks(query, tracks) {
   const words = significantWords(query);
   const normalizedQuery = normalizeTitle(query);
-
   const filtered = tracks.filter(track => {
     const text = `${track.title} ${track.artist}`;
     if (JUNK_PATTERNS.some(p => p.test(text))) return false;
     if (words.length === 0) return true;
     const lower = text.toLowerCase();
-    const matchCount = words.filter(w => lower.includes(w)).length;
-    return matchCount >= Math.min(2, words.length);
+    return words.filter(w => lower.includes(w)).length >= Math.min(2, words.length);
   });
-
   const sorted = filtered
     .map(track => ({ track, score: scoreTrack(words, normalizedQuery, track) }))
     .sort((a, b) => b.score - a.score)
     .map(item => item.track);
-
   const dedupMap = new Map();
   for (const track of sorted) {
     const key = `${normalizeTitle(track.title)}::${track.artist.toLowerCase()}`;
     if (!dedupMap.has(key)) dedupMap.set(key, track);
   }
-
   return Array.from(dedupMap.values());
 }
 
-/**
- * Derive unique artists from track list
- */
 function deriveArtists(tracks) {
   const counts = new Map();
-
   tracks.forEach((track, idx) => {
     const name = track.artist || 'Unknown Artist';
     const key = name.toLowerCase();
@@ -328,20 +410,11 @@ function deriveArtists(tracks) {
     if (!current.image && track.thumbnailUrl) current.image = track.thumbnailUrl;
     counts.set(key, current);
   });
-
   return Array.from(counts.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map(a => ({
-      id: toSlug(a.name),
-      name: a.name,
-      image: a.image,
-    }));
+    .sort((a, b) => b.score - a.score).slice(0, 5)
+    .map(a => ({ id: toSlug(a.name), name: a.name, image: a.image }));
 }
 
-/**
- * Fetch albums from iTunes
- */
 async function fetchITunesAlbums(query) {
   try {
     const res = await fetch(`${CONFIG.ITUNES_API}/search?term=${encodeURIComponent(query)}&entity=album&limit=8`);
@@ -354,40 +427,24 @@ async function fetchITunesAlbums(query) {
       coverImage: album.artworkUrl100?.replace('100x100bb', '600x600bb'),
       releaseDate: album.releaseDate,
     }));
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-/**
- * Fetch artist info from iTunes
- */
 async function fetchITunesArtist(name) {
   try {
     const res = await fetch(`${CONFIG.ITUNES_API}/search?term=${encodeURIComponent(name)}&entity=musicArtist&limit=1`);
     if (!res.ok) return null;
-    const data = await res.json();
-    return data.results?.[0] || null;
-  } catch {
-    return null;
-  }
-}
-
-function formatDurationMs(ms) {
-  if (!ms || Number.isNaN(ms)) return '0:00';
-  const totalSeconds = Math.floor(ms / 1000);
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return (await res.json()).results?.[0] || null;
+  } catch { return null; }
 }
 
 // ==================== ROUTES ====================
 
 app.get('/', (req, res) => {
   res.json({
-    name: 'KhayaBeats API Server',
+    name: 'KhayaBeats Server',
     status: 'online',
-    version: '2.0.0',
+    version: '3.0.0',
     endpoints: [
       'GET  /health',
       'GET  /stream/:videoId',
@@ -401,58 +458,49 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', async (req, res) => {
-  let engine = { online: false };
-
-  try {
-    const response = await fetch(`${CONFIG.YT_ENGINE_URL}/health`, {
-      signal: AbortSignal.timeout(1500),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      engine = {
-        online: true,
-        server: data.server,
-        queue: data?.stats?.queuedJobs ?? data?.stats?.currentQueue ?? 0,
-        activeDownloads: data?.stats?.activeDownloads ?? 0,
-      };
-    }
-  } catch {
-    engine = { online: false };
-  }
-
+app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    server: 'khayabeats-api',
-    version: '2.0.0',
+    server: 'khayabeats',
+    version: '3.0.0',
     uptime: process.uptime(),
     cache: getCacheStats(),
-    engine,
+    engine: {
+      online: true,
+      embedded: true,
+      queue: dlStats.queued,
+      activeDownloads: inflightDownloads.size,
+      stats: dlStats,
+    },
   });
 });
 
+// Stream a cached/downloaded track
 app.get('/stream/:videoId', async (req, res) => {
   const { videoId } = req.params;
   if (!videoId) return res.status(400).json({ error: 'Video ID required' });
 
   try {
-    const cached = await ensureCachedTrack(videoId);
-    console.log(`[CACHE HIT] Streaming ${videoId}`);
-    return streamFile(cached.filePath, cached.contentType, res);
+    const result = await enqueueDownload(videoId);
+    const file = findCachedFile(videoId) || result;
+    console.log(`[STREAM] ${videoId}`);
+    return streamFile(file.filePath, file.contentType || getContentType(file.ext), res);
   } catch (error) {
     console.error(`[ERROR] Stream failed for ${videoId}:`, error.message);
     res.status(500).json({ error: 'Stream failed', message: error.message });
   }
 });
 
+// Get audio URL (triggers download if needed, returns stream URL)
 app.post('/audio-url', async (req, res) => {
-  const { videoId, title, artist } = req.body;
+  const { videoId } = req.body;
   if (!videoId) return res.status(400).json({ success: false, error: 'Video ID required' });
 
   try {
     const wasCached = Boolean(findCachedFile(videoId));
-    await ensureCachedTrack(videoId, title, artist);
+    if (wasCached) console.log(`[CACHE HIT] ${videoId}`);
+
+    await enqueueDownload(videoId);
 
     return res.json({
       success: true,
@@ -465,16 +513,12 @@ app.post('/audio-url', async (req, res) => {
   }
 });
 
-/**
- * UPGRADED SEARCH: Returns grouped { artists, songs, albums }
- * GET /search?q=<query>&limit=60
- */
+// Grouped search
 app.get('/search', async (req, res) => {
   const { q, limit = 60 } = req.query;
   if (!q) return res.status(400).json({ error: 'Query required' });
 
   try {
-    // Check metadata cache
     const cacheKey = `search:${q}:${limit}`;
     const cached = metadataCache.get(cacheKey);
     if (cached) {
@@ -482,35 +526,14 @@ app.get('/search', async (req, res) => {
       return res.json(cached);
     }
 
-    // Fetch raw results from yt-engine
-    let rawTracks = [];
-    try {
-      const response = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(q)}&limit=${limit}`, {
-        signal: AbortSignal.timeout(12000),
-      });
-      if (!response.ok) throw new Error(`yt-engine search failed (${response.status})`);
-      const data = await response.json();
-      rawTracks = data.results || [];
-    } catch (e) {
-      console.error('[SEARCH] yt-engine search failed:', e.message);
-    }
+    const rawTracks = await searchYouTube(q, parseInt(limit, 10));
+    if (rawTracks.length === 0) return res.json({ artists: [], songs: [], albums: [] });
 
-    if (rawTracks.length === 0) {
-      return res.json({ artists: [], songs: [], albums: [] });
-    }
-
-    // Filter, deduplicate, rank
     const songs = rankTracks(q, rawTracks).slice(0, 30);
     const artists = deriveArtists(songs);
-
-    // Fetch albums from iTunes in parallel
     const albums = await fetchITunesAlbums(q);
-
     const result = { artists, songs, albums };
-
-    // Cache for 10 minutes
     metadataCache.set(cacheKey, result, 600);
-
     console.log(`[SEARCH] ${q} → ${artists.length} artists, ${songs.length} songs, ${albums.length} albums`);
     res.json(result);
   } catch (error) {
@@ -519,60 +542,34 @@ app.get('/search', async (req, res) => {
   }
 });
 
-/**
- * ARTIST PROFILE: Returns full profile with top songs, albums, singles
- * GET /artists/:artistId?name=<artistName>
- */
+// Artist profile
 app.get('/artists/:artistId', async (req, res) => {
   const { artistId } = req.params;
   const artistName = req.query.name || artistId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   try {
-    // Check cache
     const cacheKey = `artist:${artistId}`;
     const cached = metadataCache.get(cacheKey);
-    if (cached) {
-      console.log(`[ARTIST CACHE HIT] ${artistName}`);
-      return res.json(cached);
-    }
+    if (cached) return res.json(cached);
 
-    // Parallel: search songs, fetch iTunes artist info, fetch iTunes albums
-    const [songsResponse, artistInfo, albumsData] = await Promise.all([
-      // Songs search via yt-engine
-      (async () => {
-        try {
-          const r = await fetch(`${CONFIG.YT_ENGINE_URL}/search?q=${encodeURIComponent(artistName + ' official songs')}&limit=40`, {
-            signal: AbortSignal.timeout(12000),
-          });
-          if (!r.ok) throw new Error(`yt-engine artist search failed (${r.status})`);
-          const d = await r.json();
-          return d.results || [];
-        } catch { return []; }
-      })(),
+    const [rawSongs, artistInfo, albumsData] = await Promise.all([
+      searchYouTube(`${artistName} official songs`, 40).catch(() => []),
       fetchITunesArtist(artistName),
       (async () => {
         try {
           const r = await fetch(`${CONFIG.ITUNES_API}/search?term=${encodeURIComponent(artistName)}&entity=album&limit=24`);
           if (!r.ok) return [];
-          const d = await r.json();
-          return (d.results || []).map(album => ({
-            id: String(album.collectionId),
-            title: album.collectionName,
-            artist: album.artistName,
-            coverImage: album.artworkUrl100?.replace('100x100bb', '600x600bb'),
-            releaseDate: album.releaseDate,
-          }));
+          return (await r.json()).results?.map(a => ({
+            id: String(a.collectionId), title: a.collectionName, artist: a.artistName,
+            coverImage: a.artworkUrl100?.replace('100x100bb', '600x600bb'), releaseDate: a.releaseDate,
+          })) || [];
         } catch { return []; }
       })(),
     ]);
 
-    // Filter songs to only those by this artist
-    const rankedSongs = rankTracks(artistName, songsResponse);
+    const rankedSongs = rankTracks(artistName, rawSongs);
     const firstWord = artistName.toLowerCase().split(' ')[0];
-    const topSongs = rankedSongs
-      .filter(s => s.artist.toLowerCase().includes(firstWord))
-      .slice(0, 20);
-
+    const topSongs = rankedSongs.filter(s => s.artist.toLowerCase().includes(firstWord)).slice(0, 20);
     const singles = albumsData.filter(a => /single/i.test(a.title)).slice(0, 8);
     const albums = albumsData.filter(a => !/single/i.test(a.title)).slice(0, 12);
 
@@ -581,19 +578,13 @@ app.get('/artists/:artistId', async (req, res) => {
       name: artistInfo?.artistName || artistName,
       image: topSongs[0]?.thumbnailUrl || null,
       bannerImage: topSongs[0]?.thumbnailUrl || null,
-      bio: artistInfo
-        ? `${artistInfo.artistName} is a ${artistInfo.primaryGenreName || ''} artist.`
-        : `${artistName} profile generated from live catalog data.`,
+      bio: artistInfo ? `${artistInfo.artistName} is a ${artistInfo.primaryGenreName || ''} artist.` : `${artistName} profile.`,
       genres: artistInfo?.primaryGenreName ? [artistInfo.primaryGenreName] : [],
       monthlyListeners: Math.floor((topSongs.length || 1) * 125000),
-      topSongs,
-      albums,
-      singles,
+      topSongs, albums, singles,
     };
 
-    // Cache for 1 hour
     metadataCache.set(cacheKey, profile, 3600);
-
     console.log(`[ARTIST] ${artistName} → ${topSongs.length} songs, ${albums.length} albums`);
     res.json(profile);
   } catch (error) {
@@ -602,10 +593,7 @@ app.get('/artists/:artistId', async (req, res) => {
   }
 });
 
-/**
- * ALBUM PROFILE: Returns album metadata + full tracklist
- * GET /albums/:albumId?title=<title>&artist=<artist>
- */
+// Album profile
 app.get('/albums/:albumId', async (req, res) => {
   const { albumId } = req.params;
   const titleHint = req.query.title;
@@ -620,17 +608,16 @@ app.get('/albums/:albumId', async (req, res) => {
       const search = await fetch(`${CONFIG.ITUNES_API}/search?term=${encodeURIComponent(query)}&entity=album&limit=1`);
       const searchData = search.ok ? await search.json() : { results: [] };
       const match = searchData.results?.[0];
-
       if (match?.collectionId) {
         lookup = await fetch(`${CONFIG.ITUNES_API}/lookup?id=${encodeURIComponent(match.collectionId)}&entity=song`);
         data = lookup.ok ? await lookup.json() : { results: [] };
       }
     }
 
-    const collection = (data.results || []).find((item) => item.wrapperType === 'collection');
+    const collection = (data.results || []).find(item => item.wrapperType === 'collection');
     const tracks = (data.results || [])
-      .filter((item) => item.wrapperType === 'track')
-      .map((track) => ({
+      .filter(item => item.wrapperType === 'track')
+      .map(track => ({
         id: String(track.trackId),
         title: track.trackName,
         artist: track.artistName,
@@ -638,9 +625,7 @@ app.get('/albums/:albumId', async (req, res) => {
         trackNumber: track.trackNumber,
       }));
 
-    if (!collection && tracks.length === 0) {
-      return res.status(404).json({ error: 'Album not found' });
-    }
+    if (!collection && tracks.length === 0) return res.status(404).json({ error: 'Album not found' });
 
     return res.json({
       id: String(collection?.collectionId || albumId),
@@ -656,27 +641,23 @@ app.get('/albums/:albumId', async (req, res) => {
   }
 });
 
-/**
- * Download for offline
- */
+// Download for offline — streams the file as an attachment
 app.get('/offline/download/:videoId', async (req, res) => {
   const { videoId } = req.params;
-
   try {
-    const cached = await ensureCachedTrack(videoId);
-
-    res.setHeader('Content-Type', cached.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${videoId}${cached.ext}"`);
-    fs.createReadStream(cached.filePath).pipe(res);
+    const result = await enqueueDownload(videoId);
+    const file = findCachedFile(videoId) || result;
+    const ext = file.ext || path.extname(file.filePath);
+    res.setHeader('Content-Type', file.contentType || getContentType(ext));
+    res.setHeader('Content-Disposition', `attachment; filename="${videoId}${ext}"`);
+    fs.createReadStream(file.filePath).pipe(res);
   } catch (error) {
     console.error(`[ERROR] Offline download failed for ${videoId}:`, error.message);
-    res.status(500).json({ error: 'Download failed' });
+    res.status(500).json({ error: 'Download failed', message: error.message });
   }
 });
 
-app.get('/cache/stats', (req, res) => {
-  res.json(getCacheStats());
-});
+app.get('/cache/stats', (req, res) => res.json(getCacheStats()));
 
 app.post('/cache/cleanup', (req, res) => {
   const { maxAgeDays = 30 } = req.body;
@@ -686,32 +667,39 @@ app.post('/cache/cleanup', (req, res) => {
 
 // Periodic cache cleanup
 setInterval(() => {
-  console.log('[CLEANUP] Running periodic cache cleanup...');
   const deleted = cleanupCache(30);
-  console.log(`[CLEANUP] Removed ${deleted} old files`);
+  if (deleted > 0) console.log(`[CLEANUP] Removed ${deleted} old files`);
 }, CONFIG.CACHE_CLEANUP_INTERVAL);
+
+// ==================== START ====================
 
 app.listen(PORT, () => {
   console.log(`
-╔════════════════════════════════════════════════════════╗
-║                                                        ║
-║   🎵 KHAYABEATS API Server v2.0                        ║
-║                                                        ║
-║   Running on: http://localhost:${PORT}                   ║
+╔════════════════════════════════════════════════════╗
+║                                                    ║
+║   🎵 KHAYABEATS Server v3.0                        ║
+║                                                    ║
+║   Running on: http://localhost:${PORT}               ║
 ║   Cache Dir:  ${CONFIG.CACHE_DIR}
-║                                                        ║
-║   Endpoints:                                           ║
-║   • GET  /              - Server info                  ║
-║   • GET  /health        - Health check                 ║
-║   • GET  /stream/:id    - Stream audio                 ║
-║   • POST /audio-url     - Get stream URL               ║
-║   • GET  /search?q=     - Grouped search               ║
-║   • GET  /artists/:id   - Artist profile               ║
-║   • GET  /albums/:id    - Album profile + tracks       ║
-║   • GET  /offline/download/:id - Download for offline  ║
-║                                                        ║
-╚════════════════════════════════════════════════════════╝
+║   yt-dlp:     ${CONFIG.YT_DLP_PATH}
+║                                                    ║
+║   ✅ Single process — no separate engine needed    ║
+║   ✅ Just run: npm start                           ║
+║                                                    ║
+╚════════════════════════════════════════════════════╝
   `);
+
+  exec(`${CONFIG.YT_DLP_PATH} --version`, (error, stdout) => {
+    if (error) {
+      console.error(`
+⚠️  yt-dlp not found! Install it:
+    pip install yt-dlp
+    OR download from https://github.com/yt-dlp/yt-dlp/releases
+      `);
+    } else {
+      console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+    }
+  });
 });
 
 module.exports = app;
