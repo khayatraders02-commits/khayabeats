@@ -389,6 +389,104 @@ export const SettingsPage = () => {
           </div>
         </div>
 
+        {/* Server Management */}
+        <div>
+          <h3 className="text-sm font-medium text-muted-foreground mb-2 px-4">Server</h3>
+          <div className="kb-glass rounded-2xl overflow-hidden">
+            <SettingItem
+              icon={Server}
+              title="Server Status"
+              subtitle={isOnline ? 'Online ✅' : 'Offline ❌'}
+              rightElement={
+                <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+              }
+              onClick={() => {
+                checkServerHealth();
+                setShowServerDialog(true);
+                checkAuthStatus();
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Server Dialog */}
+        <Dialog open={showServerDialog} onOpenChange={setShowServerDialog}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Server size={20} />
+                Server Management
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {/* Status */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm font-medium">Status</span>
+                <span className={`text-sm font-medium flex items-center gap-1 ${isOnline ? 'text-green-500' : 'text-red-500'}`}>
+                  {isOnline ? <><CheckCircle size={14} /> Online</> : <><XCircle size={14} /> Offline</>}
+                </span>
+              </div>
+
+              {/* Auth Status */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm font-medium">Authentication</span>
+                <span className="text-sm text-muted-foreground">
+                  {checkingAuth ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : authStatus?.method === 'cookies' ? (
+                    <span className="text-green-500">Cookies ✅</span>
+                  ) : authStatus?.method === 'oauth' ? (
+                    <span className="text-green-500">OAuth ✅</span>
+                  ) : authStatus?.status === 'unreachable' ? (
+                    <span className="text-red-500">Unreachable</span>
+                  ) : (
+                    <span className="text-yellow-500">Not configured</span>
+                  )}
+                </span>
+              </div>
+
+              {/* Cookie Upload */}
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Upload a <code className="bg-muted px-1 rounded">cookies.txt</code> file exported from your browser to authenticate with YouTube.
+                </p>
+                <input
+                  ref={cookieFileRef}
+                  type="file"
+                  accept=".txt"
+                  onChange={handleCookieUpload}
+                  className="hidden"
+                />
+                <Button
+                  onClick={() => cookieFileRef.current?.click()}
+                  disabled={uploading || !isOnline}
+                  className="w-full"
+                  variant="outline"
+                >
+                  {uploading ? (
+                    <><Loader2 size={16} className="animate-spin mr-2" /> Uploading...</>
+                  ) : (
+                    <><Upload size={16} className="mr-2" /> Upload cookies.txt</>
+                  )}
+                </Button>
+                {!isOnline && (
+                  <p className="text-xs text-destructive">Server must be online to upload cookies.</p>
+                )}
+              </div>
+
+              {/* Refresh */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full"
+                onClick={() => { checkServerHealth(); checkAuthStatus(); }}
+              >
+                <RefreshCw size={14} className="mr-2" /> Refresh Status
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* Legal */}
         <div>
           <h3 className="text-sm font-medium text-muted-foreground mb-2 px-4">Legal</h3>
