@@ -17,6 +17,8 @@ const Queue = require('better-queue');
 const app = express();
 const PORT = process.env.YT_ENGINE_PORT || 3002;
 
+const COOKIES_PATH = path.join(__dirname, '..', 'cookies.txt');
+
 const CONFIG = {
   CACHE_DIR: path.join(__dirname, '..', 'storage', 'music-cache'),
   MAX_CONCURRENT_DOWNLOADS: Number(process.env.MAX_CONCURRENT_DOWNLOADS || 10),
@@ -24,6 +26,7 @@ const CONFIG = {
   MAX_DOWNLOAD_ATTEMPTS: Number(process.env.MAX_DOWNLOAD_ATTEMPTS || 3),
   RETRY_BACKOFF_MS: Number(process.env.RETRY_BACKOFF_MS || 1200),
   YT_DLP_PATH: getYtDlpPath(),
+  COOKIES_FILE: fs.existsSync(COOKIES_PATH) ? COOKIES_PATH : null,
 };
 
 if (!fs.existsSync(CONFIG.CACHE_DIR)) {
@@ -180,6 +183,10 @@ function runYtDlpDownload(videoId) {
       '--force-ipv4',
       '--no-part',
     ];
+
+    if (CONFIG.COOKIES_FILE) {
+      args.push('--cookies', CONFIG.COOKIES_FILE);
+    }
 
     console.log(`[DOWNLOAD] Starting: ${videoId}`);
 

@@ -17,6 +17,8 @@ const Queue = require('better-queue');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+
 const CONFIG = {
   CACHE_DIR: path.join(__dirname, 'storage', 'music-cache'),
   TEMP_DIR: path.join(__dirname, 'storage', 'temp'),
@@ -28,6 +30,7 @@ const CONFIG = {
   MAX_DOWNLOAD_ATTEMPTS: 3,
   RETRY_BACKOFF_MS: 1500,
   YT_DLP_PATH: getYtDlpPath(),
+  COOKIES_FILE: fs.existsSync(COOKIES_PATH) ? COOKIES_PATH : null,
 };
 
 [CONFIG.CACHE_DIR, CONFIG.TEMP_DIR].forEach(dir => {
@@ -117,6 +120,11 @@ function runYtDlpDownload(videoId) {
       '--force-ipv4',
       '--no-part',
     ];
+
+    // Add cookies if available
+    if (CONFIG.COOKIES_FILE) {
+      args.push('--cookies', CONFIG.COOKIES_FILE);
+    }
 
     console.log(`[DOWNLOAD] Starting: ${videoId}`);
     const proc = spawn(CONFIG.YT_DLP_PATH, args);
@@ -215,6 +223,11 @@ function searchYouTube(query, limit = 20) {
       '--no-warnings',
       '--quiet',
     ];
+
+    // Add cookies if available
+    if (CONFIG.COOKIES_FILE) {
+      args.push('--cookies', CONFIG.COOKIES_FILE);
+    }
     const proc = spawn(CONFIG.YT_DLP_PATH, args);
     let stdout = '';
     let stderr = '';
@@ -670,6 +683,29 @@ app.get('/offline/download/:videoId', async (req, res) => {
 
 app.get('/cache/stats', (req, res) => res.json(getCacheStats()));
 
+// Upload cookies.txt via POST (for Render deployment)
+app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
+  try {
+    fs.writeFileSync(COOKIES_PATH, req.body);
+    CONFIG.COOKIES_FILE = COOKIES_PATH;
+    console.log('[COOKIES] cookies.txt uploaded and activated');
+    res.json({ success: true, message: 'Cookies uploaded successfully' });
+  } catch (error) {
+    console.error('[COOKIES ERROR]', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Check cookies status
+app.get('/cookies-status', (req, res) => {
+  const exists = fs.existsSync(COOKIES_PATH);
+  res.json({ 
+    hasCookies: exists, 
+    path: exists ? COOKIES_PATH : null,
+    size: exists ? fs.statSync(COOKIES_PATH).size : 0,
+  });
+});
+
 app.post('/cache/cleanup', (req, res) => {
   const { maxAgeDays = 30 } = req.body;
   const deleted = cleanupCache(maxAgeDays);
@@ -696,6 +732,7 @@ app.listen(PORT, () => {
 ║                                                    ║
 ║   ✅ Single process — no separate engine needed    ║
 ║   ✅ Just run: npm start                           ║
+║   🍪 Cookies: ${CONFIG.COOKIES_FILE ? 'LOADED ✅' : 'NOT FOUND ⚠️'}
 ║                                                    ║
 ╚════════════════════════════════════════════════════╝
   `);
@@ -709,6 +746,18 @@ app.listen(PORT, () => {
       `);
     } else {
       console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+    }
+
+    if (!CONFIG.COOKIES_FILE) {
+      console.warn(`
+⚠️  No cookies.txt found!
+    YouTube may block requests with "Sign in to confirm you're not a bot".
+    
+    To fix this:
+    1. Export cookies from your browser using a browser extension (e.g., "Get cookies.txt LOCALLY")
+    2. Place the cookies.txt file in the server root directory
+    3. Or POST it to /upload-cookies endpoint
+      `);
     }
   });
 });
