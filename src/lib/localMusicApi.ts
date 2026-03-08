@@ -298,21 +298,20 @@ export const searchMusicCatalog = async (query: string): Promise<SearchCatalogRe
 export const getArtistProfile = async (artistId: string, artistNameHint?: string): Promise<ArtistProfileResponse> => {
   const artistName = artistNameHint || fromSlug(artistId);
 
-  if (canUseLocalServerFromCurrentClient()) {
-    try {
-      const res = await fetch(`${LOCAL_SERVER_URL}/artists/${artistId}?name=${encodeURIComponent(artistName)}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          ...data,
-          topSongs: (data.topSongs || []).map(mapTrack),
-        };
-      }
-    } catch {
-      console.log('[ArtistProfile] Local server offline, assembling client-side...');
+  const serverUrl = getServerUrl();
+  try {
+    const res = await fetch(`${serverUrl}/artists/${artistId}?name=${encodeURIComponent(artistName)}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        ...data,
+        topSongs: (data.topSongs || []).map(mapTrack),
+      };
     }
+  } catch {
+    console.log('[ArtistProfile] Server offline, assembling client-side...');
   }
 
   const [songsData, artistRes, albumsRes] = await Promise.all([
