@@ -683,6 +683,29 @@ app.get('/offline/download/:videoId', async (req, res) => {
 
 app.get('/cache/stats', (req, res) => res.json(getCacheStats()));
 
+// Upload cookies.txt via POST (for Render deployment)
+app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
+  try {
+    fs.writeFileSync(COOKIES_PATH, req.body);
+    CONFIG.COOKIES_FILE = COOKIES_PATH;
+    console.log('[COOKIES] cookies.txt uploaded and activated');
+    res.json({ success: true, message: 'Cookies uploaded successfully' });
+  } catch (error) {
+    console.error('[COOKIES ERROR]', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Check cookies status
+app.get('/cookies-status', (req, res) => {
+  const exists = fs.existsSync(COOKIES_PATH);
+  res.json({ 
+    hasCookies: exists, 
+    path: exists ? COOKIES_PATH : null,
+    size: exists ? fs.statSync(COOKIES_PATH).size : 0,
+  });
+});
+
 app.post('/cache/cleanup', (req, res) => {
   const { maxAgeDays = 30 } = req.body;
   const deleted = cleanupCache(maxAgeDays);
