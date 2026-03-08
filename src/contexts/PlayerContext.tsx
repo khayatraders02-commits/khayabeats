@@ -7,6 +7,7 @@ import { getDownloadedTrack } from '@/lib/offlineStorage';
 // Server URLs
 const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
 const LOCAL_SERVER_URL = 'http://localhost:3001';
+const STREAM_READY_TIMEOUT_MS = 130000;
 
 const getAudioServerUrl = () => {
   if (typeof window === 'undefined') return LOCAL_SERVER_URL;
