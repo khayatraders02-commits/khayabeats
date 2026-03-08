@@ -834,7 +834,7 @@ app.listen(PORT, () => {
 ║                                                    ║
 ║   ✅ Single process — no separate engine needed    ║
 ║   ✅ Just run: npm start                           ║
-║   🍪 Cookies: ${CONFIG.COOKIES_FILE ? 'LOADED ✅' : 'NOT FOUND ⚠️'}
+║   🔐 Auth: ${CONFIG.USE_OAUTH ? 'OAuth ✅' : CONFIG.COOKIES_FILE ? 'Cookies 🍪' : 'NONE ⚠️'}
 ║                                                    ║
 ╚════════════════════════════════════════════════════╝
   `);
@@ -850,15 +850,21 @@ app.listen(PORT, () => {
       console.log(`✅ yt-dlp version: ${stdout.trim()}`);
     }
 
-    if (!CONFIG.COOKIES_FILE) {
+    if (!CONFIG.USE_OAUTH && !CONFIG.COOKIES_FILE) {
       console.warn(`
-⚠️  No cookies.txt found!
-    YouTube may block requests with "Sign in to confirm you're not a bot".
+⚠️  No authentication configured!
+    YouTube will block requests from datacenter IPs.
     
-    To fix this:
-    1. Export cookies from your browser using a browser extension (e.g., "Get cookies.txt LOCALLY")
-    2. Place the cookies.txt file in the server root directory
-    3. Or POST it to /upload-cookies endpoint
+    RECOMMENDED — OAuth (one-time setup, auto-renews):
+    1. POST to /oauth-setup to start the OAuth flow
+    2. Follow the URL and enter the code shown
+    3. Done! Token auto-refreshes forever.
+    
+    OR set YT_OAUTH_REFRESH_TOKEN env var on Render.
+    
+    ALTERNATIVE — Cookies (manual, expires):
+    1. Export cookies from your browser
+    2. POST to /upload-cookies
       `);
     }
   });
