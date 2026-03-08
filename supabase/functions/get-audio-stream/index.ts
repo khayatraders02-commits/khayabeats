@@ -219,11 +219,14 @@ serve(async (req) => {
     let result: { url: string; mimeType: string; trackInfo?: any } | null = null;
     let serverOnline = false;
 
-    // 1. Private yt-dlp server
+    // 1. Private yt-dlp server (wake first to handle Render cold starts)
     if (videoId && YT_SERVER_URL) {
       console.log(`[1/5] Your yt-dlp server...`);
-      result = await tryYTServer(videoId, title, artist);
-      if (result) serverOnline = true;
+      const awake = await wakeServer();
+      if (awake) {
+        result = await tryYTServer(videoId, title, artist);
+        if (result) serverOnline = true;
+      }
     }
 
     // 2. Cobalt (most reliable public extractor)
