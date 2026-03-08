@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Music2, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { lovable } from '@/integrations/lovable/index';
 
 const emailSchema = z.string().email('Please enter a valid email');
 const passwordSchema = z.string().min(6, 'Password must be at least 6 characters');
