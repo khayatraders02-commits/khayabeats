@@ -235,6 +235,7 @@ function searchYouTube(query, limit = 20) {
       '--dump-single-json',
       '--no-warnings',
       '--quiet',
+      '--extractor-arg', 'youtube:player_client=ios,web',
       ...getAuthArgs(),
     ];
     const proc = spawn(CONFIG.YT_DLP_PATH, args);
