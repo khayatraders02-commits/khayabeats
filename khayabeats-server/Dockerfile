@@ -17,7 +17,7 @@ RUN npm install --production
 COPY . .
 
 # Create storage directories
-RUN mkdir -p storage/music-cache storage/temp
+RUN mkdir -p storage/music-cache storage/temp storage/yt-dlp-cache
 
 EXPOSE 3001
 
