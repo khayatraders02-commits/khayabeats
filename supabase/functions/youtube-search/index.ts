@@ -189,7 +189,7 @@ async function searchPipedAPI(query: string, maxResults: number): Promise<any[]>
       if (!data.items || data.items.length === 0) continue;
       
       const results = data.items
-        .filter((item: any) => item.type === "stream" && item.duration > 30 && item.duration < 720)
+        .filter((item: any) => item.type === "stream" && item.duration > 30 && item.duration < 600 && !JUNK_TITLE_PATTERNS.some(p => p.test(item.title || '')))
         .slice(0, maxResults)
         .map((item: any) => {
           // Extract video ID from URL
