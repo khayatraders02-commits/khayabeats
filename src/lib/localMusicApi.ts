@@ -1,7 +1,15 @@
 import { Track } from '@/types/music';
 import { supabase } from '@/integrations/supabase/client';
 
+const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
 const LOCAL_SERVER_URL = 'http://localhost:3001';
+
+const getServerUrl = () => {
+  if (typeof window === 'undefined') return LOCAL_SERVER_URL;
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return LOCAL_SERVER_URL;
+  return REMOTE_SERVER_URL;
+};
 
 const canUseLocalServerFromCurrentClient = () => {
   if (typeof window === 'undefined') return true;
