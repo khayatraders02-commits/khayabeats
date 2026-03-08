@@ -131,28 +131,26 @@ async function tryPiped(videoId: string): Promise<AudioResult | null> {
     "https://watchapi.whatever.social",
   ];
 
-  for (const instance of instances) {
-    try {
-      const r = await fetch(`${instance}/streams/${videoId}`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { Accept: "application/json" },
-      });
-      if (!r.ok) continue;
+  const attempts = instances.map(async (instance) => {
+    const r = await fetch(`${instance}/streams/${videoId}`, {
+      signal: AbortSignal.timeout(4500),
+      headers: { Accept: "application/json" },
+    });
 
-      const data = await r.json();
-      if (data.error) continue;
+    if (!r.ok) throw new Error(`${instance} ${r.status}`);
+    const data = await r.json();
+    if (data.error) throw new Error(`${instance} error`);
 
-      const streams = (data.audioStreams || []).filter((s: any) => s.url);
-      if (streams.length === 0) continue;
+    const streams = (data.audioStreams || []).filter((s: any) => s.url);
+    if (streams.length === 0) throw new Error(`${instance} no streams`);
 
-      streams.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-      return { url: streams[0].url, mimeType: streams[0].mimeType || "audio/mp4" };
-    } catch {
-      // Try next instance
-    }
-  }
+    streams.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+    return { url: streams[0].url, mimeType: streams[0].mimeType || "audio/mp4" } satisfies AudioResult;
+  });
 
-  return null;
+  const settled = await Promise.allSettled(attempts);
+  const success = settled.find((r): r is PromiseFulfilledResult<AudioResult> => r.status === "fulfilled");
+  return success?.value ?? null;
 }
 
 async function tryInvidious(videoId: string): Promise<AudioResult | null> {
@@ -162,31 +160,30 @@ async function tryInvidious(videoId: string): Promise<AudioResult | null> {
     "https://invidious.nerdvpn.de",
   ];
 
-  for (const instance of instances) {
-    try {
-      const r = await fetch(`${instance}/api/v1/videos/${videoId}`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { Accept: "application/json" },
-      });
-      if (!r.ok) continue;
+  const attempts = instances.map(async (instance) => {
+    const r = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+      signal: AbortSignal.timeout(4500),
+      headers: { Accept: "application/json" },
+    });
 
-      const data = await r.json();
-      const audioFormats = (data.adaptiveFormats || []).filter((f: any) =>
-        f.type?.includes("audio") && f.url,
-      );
-      if (audioFormats.length === 0) continue;
+    if (!r.ok) throw new Error(`${instance} ${r.status}`);
+    const data = await r.json();
 
-      audioFormats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-      return {
-        url: audioFormats[0].url,
-        mimeType: audioFormats[0].type?.split(";")[0] || "audio/mp4",
-      };
-    } catch {
-      // Try next instance
-    }
-  }
+    const audioFormats = (data.adaptiveFormats || []).filter((f: any) =>
+      f.type?.includes("audio") && f.url,
+    );
+    if (audioFormats.length === 0) throw new Error(`${instance} no formats`);
 
-  return null;
+    audioFormats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+    return {
+      url: audioFormats[0].url,
+      mimeType: audioFormats[0].type?.split(";")[0] || "audio/mp4",
+    } satisfies AudioResult;
+  });
+
+  const settled = await Promise.allSettled(attempts);
+  const success = settled.find((r): r is PromiseFulfilledResult<AudioResult> => r.status === "fulfilled");
+  return success?.value ?? null;
 }
 
 serve(async (req) => {
