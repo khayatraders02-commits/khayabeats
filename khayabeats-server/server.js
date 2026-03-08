@@ -223,6 +223,11 @@ function searchYouTube(query, limit = 20) {
       '--no-warnings',
       '--quiet',
     ];
+
+    // Add cookies if available
+    if (CONFIG.COOKIES_FILE) {
+      args.push('--cookies', CONFIG.COOKIES_FILE);
+    }
     const proc = spawn(CONFIG.YT_DLP_PATH, args);
     let stdout = '';
     let stderr = '';
