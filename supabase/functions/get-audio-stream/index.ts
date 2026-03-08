@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { Innertube } from "npm:youtubei.js@latest";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,101 +7,72 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges",
 };
 
-const YT_SERVER_URL = Deno.env.get("KHAYABEATS_SERVER_URL") || "";
-
-// ── Source 1: Private yt-dlp server ──
-async function wakeServer(): Promise<boolean> {
-  if (!YT_SERVER_URL) return false;
+// ── Source 1: youtubei.js (handles signature decryption) ──
+async function tryYouTubeJS(videoId: string): Promise<{ url: string; mimeType: string } | null> {
   try {
-    console.log(`[YT-Server] Waking server...`);
-    const r = await fetch(`${YT_SERVER_URL}/health`, { signal: AbortSignal.timeout(55000) });
-    const ok = r.ok;
-    console.log(`[YT-Server] Wake ${ok ? "OK" : "FAIL " + r.status}`);
-    return ok;
-  } catch (e) { console.log(`[YT-Server] Wake failed: ${(e as Error).message}`); return false; }
-}
-
-async function tryYTServer(videoId: string, title?: string, artist?: string): Promise<{ url: string; mimeType: string } | null> {
-  if (!YT_SERVER_URL) return null;
-  try {
-    console.log(`[YT-Server] Trying: ${YT_SERVER_URL}`);
-    const r = await fetch(`${YT_SERVER_URL}/audio-url`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoId, title, artist }),
-      signal: AbortSignal.timeout(60000),
-    });
-    if (!r.ok) { console.log(`[YT-Server] HTTP ${r.status}`); return null; }
-    const d = await r.json();
-    if (d.success && d.audioUrl) { console.log(`✓ [YT-Server] OK`); return { url: d.audioUrl, mimeType: "audio/mpeg" }; }
-    return null;
-  } catch (e) { console.log(`[YT-Server] ${(e as Error).message}`); return null; }
-}
-
-// ── Source 2: Cobalt API (most reliable public extractor) ──
-async function tryCobalt(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // Public cobalt instances
-  const instances = [
-    "https://api.cobalt.tools",
-    "https://cobalt-api.kwiatekmiki.com",
-  ];
-
-  for (const instance of instances) {
-    try {
-      console.log(`[Cobalt] Trying: ${instance}`);
-      const r = await fetch(instance, {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          downloadMode: "audio",
-          audioFormat: "mp3",
-          audioBitrate: "128",
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (!r.ok) {
-        const txt = await r.text();
-        console.log(`[Cobalt] ${instance}: HTTP ${r.status} - ${txt.slice(0, 100)}`);
-        continue;
-      }
-
-      const data = await r.json();
-      // Cobalt returns { status: "tunnel"|"redirect"|"stream", url: "..." }
-      if (data.url) {
-        console.log(`✓ [Cobalt] Got URL (status: ${data.status})`);
-        return { url: data.url, mimeType: "audio/mpeg" };
-      }
-      // Picker mode (shouldn't happen for audio-only)
-      if (data.picker && data.picker.length > 0 && data.picker[0].url) {
-        console.log(`✓ [Cobalt] Got picker URL`);
-        return { url: data.picker[0].url, mimeType: "audio/mpeg" };
-      }
-      if (data.audio) {
-        console.log(`✓ [Cobalt] Got audio URL`);
-        return { url: data.audio, mimeType: "audio/mpeg" };
-      }
-
-      console.log(`[Cobalt] ${instance}: No URL in response: ${JSON.stringify(data).slice(0, 200)}`);
-    } catch (e) {
-      console.log(`[Cobalt] ${instance}: ${(e as Error).message}`);
+    console.log(`[YouTubeJS] Creating client...`);
+    const yt = await Innertube.create({ retrieve_player: true });
+    
+    console.log(`[YouTubeJS] Getting info for ${videoId}...`);
+    const info = await yt.getBasicInfo(videoId);
+    
+    if (!info.streaming_data) {
+      console.log(`[YouTubeJS] No streaming data`);
+      return null;
     }
+
+    // Get audio-only adaptive formats
+    const audioFormats = (info.streaming_data.adaptive_formats || [])
+      .filter((f: any) => f.mime_type?.startsWith("audio/") && f.decipher)
+      .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+
+    if (audioFormats.length === 0) {
+      // Try getting URL directly
+      const allAudio = (info.streaming_data.adaptive_formats || [])
+        .filter((f: any) => f.mime_type?.startsWith("audio/"));
+      
+      if (allAudio.length === 0) {
+        console.log(`[YouTubeJS] No audio formats found`);
+        return null;
+      }
+
+      // Try to get the decipher URL
+      const best = allAudio.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const url = best.decipher?.(yt.session.player) || best.url;
+      
+      if (!url) {
+        console.log(`[YouTubeJS] Could not decipher URL`);
+        return null;
+      }
+      
+      const mime = best.mime_type?.split(";")[0] || "audio/mp4";
+      console.log(`✓ [YouTubeJS] Got audio (${mime}, ${best.bitrate}bps)`);
+      return { url, mimeType: mime };
+    }
+
+    const best = audioFormats[0];
+    const url = best.decipher?.(yt.session.player) || best.url;
+    if (!url) {
+      console.log(`[YouTubeJS] Could not get URL from best format`);
+      return null;
+    }
+    
+    const mime = best.mime_type?.split(";")[0] || "audio/mp4";
+    console.log(`✓ [YouTubeJS] Got audio (${mime}, ${best.bitrate}bps)`);
+    return { url, mimeType: mime };
+  } catch (e) {
+    console.log(`[YouTubeJS] Error: ${(e as Error).message}`);
+    return null;
   }
-  return null;
 }
 
-// ── Source 3: Piped (YouTube proxy) ──
+// ── Source 2: Piped ──
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // Only instance confirmed UP from piped-instances.kavin.rocks
   const instances = [
     "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
-    "https://pipedapi.leptons.xyz",
-    "https://piped.ezero.space",
+    "https://pipedapi.darkness.services",
+    "https://watchapi.whatever.social",
   ];
 
   for (const instance of instances) {
@@ -125,9 +97,8 @@ async function tryPiped(videoId: string): Promise<{ url: string; mimeType: strin
   return null;
 }
 
-// ── Source 4: Invidious ──
+// ── Source 3: Invidious ──
 async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // From docs.invidious.io - currently healthy instances
   const instances = [
     "https://yewtu.be",
     "https://inv.nadeko.net",
@@ -157,8 +128,6 @@ async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: s
   return null;
 }
 
-// (Audius source removed)
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -181,7 +150,6 @@ serve(async (req) => {
 
       const audioResponse = await fetch(decodedUrl, { headers, signal: AbortSignal.timeout(30000) });
       if (!audioResponse.ok && audioResponse.status !== 206) {
-        const body = await audioResponse.text();
         return new Response(
           JSON.stringify({ error: "Audio source unavailable", success: false }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -216,41 +184,31 @@ serve(async (req) => {
     console.log(`\n===== Audio Request =====`);
     console.log(`Title: ${title} | Artist: ${artist} | VideoID: ${videoId}`);
 
-    let result: { url: string; mimeType: string; trackInfo?: any } | null = null;
-    const serverOnline = false;
+    let result: { url: string; mimeType: string } | null = null;
 
-    // 1. Cobalt (most reliable public extractor)
-    if (!result && videoId) {
-      console.log(`[1/4] Cobalt...`);
-      result = await tryCobalt(videoId);
+    // 1. YouTubeJS (direct extraction with signature decryption)
+    if (videoId) {
+      console.log(`[1/3] YouTubeJS...`);
+      result = await tryYouTubeJS(videoId);
     }
 
     // 2. Piped
     if (!result && videoId) {
-      console.log(`[2/4] Piped...`);
+      console.log(`[2/3] Piped...`);
       result = await tryPiped(videoId);
     }
 
     // 3. Invidious
     if (!result && videoId) {
-      console.log(`[3/4] Invidious...`);
+      console.log(`[3/3] Invidious...`);
       result = await tryInvidious(videoId);
-    }
-
-    // 4. Private yt-dlp server (last resort, may be blocked on datacenter IPs)
-    if (!result && videoId && YT_SERVER_URL) {
-      console.log(`[4/4] Your yt-dlp server...`);
-      const awake = await wakeServer();
-      if (awake) {
-        result = await tryYTServer(videoId, title, artist);
-      }
     }
 
     if (!result) {
       console.error("❌ All sources failed");
       return new Response(
         JSON.stringify({
-          error: "Start your KhayaBeats server on your PC to play this track. All public audio sources are currently unavailable for mainstream music.",
+          error: "Could not find an audio source for this track. Please try again later.",
           serverOnline: false,
           success: false,
         }),
@@ -258,12 +216,8 @@ serve(async (req) => {
       );
     }
 
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const isLocalUrl = result.url.includes("localhost") || result.url.includes("127.0.0.1");
-    const proxyEndpoint = isLocalUrl
-      ? result.url
-      : `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
+    const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
 
     console.log(`✅ Audio ready!`);
 
@@ -272,8 +226,7 @@ serve(async (req) => {
         audioUrl: proxyEndpoint,
         directUrl: result.url,
         mimeType: result.mimeType,
-        trackInfo: result.trackInfo,
-        serverOnline,
+        serverOnline: true,
         success: true,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
