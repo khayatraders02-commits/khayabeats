@@ -217,37 +217,34 @@ serve(async (req) => {
     console.log(`Title: ${title} | Artist: ${artist} | VideoID: ${videoId}`);
 
     let result: { url: string; mimeType: string; trackInfo?: any } | null = null;
-    let serverOnline = false;
+    const serverOnline = false;
 
-    // 1. Private yt-dlp server (wake first to handle Render cold starts)
-    if (videoId && YT_SERVER_URL) {
-      console.log(`[1/5] Your yt-dlp server...`);
-      const awake = await wakeServer();
-      if (awake) {
-        result = await tryYTServer(videoId, title, artist);
-        if (result) serverOnline = true;
-      }
-    }
-
-    // 2. Cobalt (most reliable public extractor)
+    // 1. Cobalt (most reliable public extractor)
     if (!result && videoId) {
-      console.log(`[2/5] Cobalt...`);
+      console.log(`[1/4] Cobalt...`);
       result = await tryCobalt(videoId);
     }
 
-    // 3. Piped
+    // 2. Piped
     if (!result && videoId) {
-      console.log(`[3/5] Piped...`);
+      console.log(`[2/4] Piped...`);
       result = await tryPiped(videoId);
     }
 
-    // 4. Invidious
+    // 3. Invidious
     if (!result && videoId) {
-      console.log(`[4/5] Invidious...`);
+      console.log(`[3/4] Invidious...`);
       result = await tryInvidious(videoId);
     }
 
-    // 5. (Audius removed)
+    // 4. Private yt-dlp server (last resort, may be blocked on datacenter IPs)
+    if (!result && videoId && YT_SERVER_URL) {
+      console.log(`[4/4] Your yt-dlp server...`);
+      const awake = await wakeServer();
+      if (awake) {
+        result = await tryYTServer(videoId, title, artist);
+      }
+    }
 
     if (!result) {
       console.error("❌ All sources failed");
