@@ -251,29 +251,28 @@ const fetchITunesAlbums = async (query: string): Promise<AlbumSearchResult[]> =>
  * Try local server grouped search first, fall back to cloud
  */
 export const searchMusicCatalog = async (query: string): Promise<SearchCatalogResponse> => {
-  if (canUseLocalServerFromCurrentClient()) {
-    try {
-      const res = await fetch(`${LOCAL_SERVER_URL}/search?q=${encodeURIComponent(query)}&limit=60`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.artists && data.songs) {
-          return {
-            artists: data.artists || [],
-            songs: (data.songs || []).map(mapTrack),
-            albums: data.albums || [],
-          };
-        }
-        const rawTracks = (data.results || []).map(mapTrack);
-        const songs = rankTracks(query, rawTracks).slice(0, 30);
-        const artists = deriveArtists(songs);
-        const albums = await fetchITunesAlbums(query);
-        return { artists, songs, albums };
+  const serverUrl = getServerUrl();
+  try {
+    const res = await fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&limit=60`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.artists && data.songs) {
+        return {
+          artists: data.artists || [],
+          songs: (data.songs || []).map(mapTrack),
+          albums: data.albums || [],
+        };
       }
-    } catch {
-      console.log('[Search] Local server offline, using cloud...');
+      const rawTracks = (data.results || []).map(mapTrack);
+      const songs = rankTracks(query, rawTracks).slice(0, 30);
+      const artists = deriveArtists(songs);
+      const albums = await fetchITunesAlbums(query);
+      return { artists, songs, albums };
     }
+  } catch {
+    console.log('[Search] Server offline, using cloud...');
   }
 
   try {
