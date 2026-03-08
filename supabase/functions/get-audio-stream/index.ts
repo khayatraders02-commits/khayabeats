@@ -44,36 +44,43 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit = {}, timeout
   return { response, data, text };
 }
 
+function isTimeoutError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const msg = `${error.name} ${error.message}`.toLowerCase();
+  return msg.includes("timeout") || msg.includes("timed out") || msg.includes("abort");
+}
+
 async function tryRenderServer(videoId: string): Promise<RenderAttempt> {
   const baseUrl = getRenderBaseUrl();
+  const streamUrl = `${baseUrl}/stream/${videoId}`;
+
+  const [health, auth] = await Promise.allSettled([
+    fetchJsonWithTimeout(`${baseUrl}/health`, { headers: { Accept: "application/json" } }, 15000),
+    fetchJsonWithTimeout(`${baseUrl}/auth-status`, { headers: { Accept: "application/json" } }, 8000),
+  ]);
+
+  const online = health.status === "fulfilled" && health.value.response.ok;
+
+  const authStatus: RenderAuthStatus | null =
+    auth.status === "fulfilled" && auth.value.response.ok && auth.value.data
+      ? {
+          method: auth.value.data.method,
+          status: auth.value.data.status,
+          cookiesConfigured: auth.value.data.cookiesConfigured,
+          oauthConfigured: auth.value.data.oauthConfigured,
+        }
+      : null;
+
+  if (!online) {
+    return {
+      result: null,
+      online: false,
+      authStatus,
+      error: "Render server is offline or cold-starting too long",
+    };
+  }
 
   try {
-    const [health, auth] = await Promise.allSettled([
-      fetchJsonWithTimeout(`${baseUrl}/health`, { headers: { Accept: "application/json" } }, 15000),
-      fetchJsonWithTimeout(`${baseUrl}/auth-status`, { headers: { Accept: "application/json" } }, 8000),
-    ]);
-
-    const online = health.status === "fulfilled" && health.value.response.ok;
-
-    const authStatus: RenderAuthStatus | null =
-      auth.status === "fulfilled" && auth.value.response.ok && auth.value.data
-        ? {
-            method: auth.value.data.method,
-            status: auth.value.data.status,
-            cookiesConfigured: auth.value.data.cookiesConfigured,
-            oauthConfigured: auth.value.data.oauthConfigured,
-          }
-        : null;
-
-    if (!online) {
-      return {
-        result: null,
-        online: false,
-        authStatus,
-        error: "Render server is offline or cold-starting too long",
-      };
-    }
-
     const audioReq = await fetchJsonWithTimeout(
       `${baseUrl}/audio-url`,
       {
@@ -84,41 +91,69 @@ async function tryRenderServer(videoId: string): Promise<RenderAttempt> {
         },
         body: JSON.stringify({ videoId }),
       },
-      18000,
+      65000,
     );
 
-    if (!audioReq.response.ok || !audioReq.data?.success || !audioReq.data?.audioUrl) {
-      const authMissing =
-        authStatus &&
-        authStatus.status === "unauthenticated" &&
-        !authStatus.cookiesConfigured &&
-        !authStatus.oauthConfigured;
-
+    if (audioReq.response.ok && audioReq.data?.success && audioReq.data?.audioUrl) {
       return {
-        result: null,
+        result: {
+          url: audioReq.data.audioUrl,
+          mimeType: "audio/mpeg",
+        },
         online: true,
         authStatus,
-        error: authMissing
-          ? "Render server is online but not authenticated with YouTube"
-          : audioReq.data?.error || `Render /audio-url failed (${audioReq.response.status})`,
+        error: null,
+      };
+    }
+
+    const serverError = audioReq.data?.error || `Render /audio-url failed (${audioReq.response.status})`;
+
+    if (serverError.toLowerCase().includes("timeout")) {
+      return {
+        result: {
+          url: streamUrl,
+          mimeType: "audio/mpeg",
+        },
+        online: true,
+        authStatus,
+        error: `${serverError}. Falling back to /stream endpoint.`,
+      };
+    }
+
+    const authMissing =
+      authStatus &&
+      authStatus.status === "unauthenticated" &&
+      !authStatus.cookiesConfigured &&
+      !authStatus.oauthConfigured;
+
+    return {
+      result: null,
+      online: true,
+      authStatus,
+      error: authMissing
+        ? "Render server is online but not authenticated with YouTube"
+        : serverError,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Render server request failed";
+
+    if (isTimeoutError(error)) {
+      return {
+        result: {
+          url: streamUrl,
+          mimeType: "audio/mpeg",
+        },
+        online: true,
+        authStatus,
+        error: "Render /audio-url timed out. Falling back to /stream endpoint.",
       };
     }
 
     return {
-      result: {
-        url: audioReq.data.audioUrl,
-        mimeType: "audio/mpeg",
-      },
+      result: null,
       online: true,
       authStatus,
-      error: null,
-    };
-  } catch (error) {
-    return {
-      result: null,
-      online: false,
-      authStatus: null,
-      error: error instanceof Error ? error.message : "Render server request failed",
+      error: message,
     };
   }
 }

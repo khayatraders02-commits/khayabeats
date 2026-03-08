@@ -7,6 +7,7 @@ import { getDownloadedTrack } from '@/lib/offlineStorage';
 // Server URLs
 const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
 const LOCAL_SERVER_URL = 'http://localhost:3001';
+const STREAM_READY_TIMEOUT_MS = 130000;
 
 const getAudioServerUrl = () => {
   if (typeof window === 'undefined') return LOCAL_SERVER_URL;
@@ -232,7 +233,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
         
         // Wait for audio to be ready
         await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Load timeout')), 20000);
+          const timeout = setTimeout(() => reject(new Error('Load timeout')), STREAM_READY_TIMEOUT_MS);
           
           const cleanup = () => {
             clearTimeout(timeout);
