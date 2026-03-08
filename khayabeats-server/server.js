@@ -135,14 +135,10 @@ function runYtDlpDownload(videoId) {
       '--concurrent-fragments', '1',
       '--force-ipv4',
       '--no-part',
+      ...getAuthArgs(),
     ];
 
-    // Add cookies if available
-    if (CONFIG.COOKIES_FILE) {
-      args.push('--cookies', CONFIG.COOKIES_FILE);
-    }
-
-    console.log(`[DOWNLOAD] Starting: ${videoId}`);
+    console.log(`[DOWNLOAD] Starting: ${videoId} (auth: ${CONFIG.USE_OAUTH ? 'OAuth' : CONFIG.COOKIES_FILE ? 'cookies' : 'none'})`);
     const proc = spawn(CONFIG.YT_DLP_PATH, args);
     let stderr = '';
     let settled = false;
