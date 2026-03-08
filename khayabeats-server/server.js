@@ -37,9 +37,21 @@ const CONFIG = {
   OAUTH_REFRESH_TOKEN: process.env.YT_OAUTH_REFRESH_TOKEN || null,
 };
 
-[CONFIG.CACHE_DIR, CONFIG.TEMP_DIR].forEach(dir => {
+[CONFIG.CACHE_DIR, CONFIG.TEMP_DIR, CONFIG.OAUTH_CACHE_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
+
+// Helper: get auth args for yt-dlp (OAuth preferred, cookies fallback)
+function getAuthArgs() {
+  const args = [];
+  if (CONFIG.USE_OAUTH) {
+    args.push('--username', 'oauth', '--password', CONFIG.OAUTH_REFRESH_TOKEN || '');
+    args.push('--cache-dir', CONFIG.OAUTH_CACHE_DIR);
+  } else if (CONFIG.COOKIES_FILE) {
+    args.push('--cookies', CONFIG.COOKIES_FILE);
+  }
+  return args;
+}
 
 const metadataCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 });
 
