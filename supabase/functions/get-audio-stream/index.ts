@@ -6,101 +6,166 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges",
 };
 
-const YT_SERVER_URL = Deno.env.get("KHAYABEATS_SERVER_URL") || "";
-
-// ── Source 1: Private yt-dlp server ──
-async function wakeServer(): Promise<boolean> {
-  if (!YT_SERVER_URL) return false;
-  try {
-    console.log(`[YT-Server] Waking server...`);
-    const r = await fetch(`${YT_SERVER_URL}/health`, { signal: AbortSignal.timeout(55000) });
-    const ok = r.ok;
-    console.log(`[YT-Server] Wake ${ok ? "OK" : "FAIL " + r.status}`);
-    return ok;
-  } catch (e) { console.log(`[YT-Server] Wake failed: ${(e as Error).message}`); return false; }
-}
-
-async function tryYTServer(videoId: string, title?: string, artist?: string): Promise<{ url: string; mimeType: string } | null> {
-  if (!YT_SERVER_URL) return null;
-  try {
-    console.log(`[YT-Server] Trying: ${YT_SERVER_URL}`);
-    const r = await fetch(`${YT_SERVER_URL}/audio-url`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoId, title, artist }),
-      signal: AbortSignal.timeout(60000),
-    });
-    if (!r.ok) { console.log(`[YT-Server] HTTP ${r.status}`); return null; }
-    const d = await r.json();
-    if (d.success && d.audioUrl) { console.log(`✓ [YT-Server] OK`); return { url: d.audioUrl, mimeType: "audio/mpeg" }; }
-    return null;
-  } catch (e) { console.log(`[YT-Server] ${(e as Error).message}`); return null; }
-}
-
-// ── Source 2: Cobalt API (most reliable public extractor) ──
-async function tryCobalt(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // Public cobalt instances
-  const instances = [
-    "https://api.cobalt.tools",
-    "https://cobalt-api.kwiatekmiki.com",
+// ── Source 1: YouTube Innertube API (direct, no third-party) ──
+async function tryInnertube(videoId: string): Promise<{ url: string; mimeType: string } | null> {
+  // Try multiple client types — Android and iOS tend to work best
+  const clients = [
+    {
+      name: "ANDROID_MUSIC",
+      context: {
+        client: {
+          clientName: "ANDROID_MUSIC",
+          clientVersion: "7.27.52",
+          androidSdkVersion: 30,
+          userAgent: "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
+          hl: "en",
+          gl: "US",
+        },
+      },
+      userAgent: "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
+      apiKey: "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
+    },
+    {
+      name: "ANDROID",
+      context: {
+        client: {
+          clientName: "ANDROID",
+          clientVersion: "19.29.37",
+          androidSdkVersion: 30,
+          userAgent: "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip",
+          hl: "en",
+          gl: "US",
+        },
+      },
+      userAgent: "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip",
+      apiKey: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+    },
+    {
+      name: "IOS",
+      context: {
+        client: {
+          clientName: "IOS",
+          clientVersion: "19.29.1",
+          deviceMake: "Apple",
+          deviceModel: "iPhone16,2",
+          userAgent: "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+          hl: "en",
+          gl: "US",
+        },
+      },
+      userAgent: "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+      apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+    },
+    {
+      name: "TV_EMBEDDED",
+      context: {
+        client: {
+          clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+          clientVersion: "2.0",
+          hl: "en",
+          gl: "US",
+        },
+        thirdParty: {
+          embedUrl: "https://www.google.com",
+        },
+      },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
+      apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+    },
   ];
 
-  for (const instance of instances) {
+  for (const client of clients) {
     try {
-      console.log(`[Cobalt] Trying: ${instance}`);
-      const r = await fetch(instance, {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
+      console.log(`[Innertube] Trying ${client.name}...`);
+
+      const payload = {
+        videoId,
+        context: client.context,
+        contentCheckOk: true,
+        racyCheckOk: true,
+        playbackContext: {
+          contentPlaybackContext: {
+            signatureTimestamp: 20073,
+          },
         },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          downloadMode: "audio",
-          audioFormat: "mp3",
-          audioBitrate: "128",
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
+      };
+
+      const r = await fetch(
+        `https://www.youtube.com/youtubei/v1/player?key=${client.apiKey}&prettyPrint=false`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": client.userAgent,
+            "X-Youtube-Client-Name": "3",
+            "X-Youtube-Client-Version": client.context.client.clientVersion,
+            "Origin": "https://www.youtube.com",
+            "Referer": "https://www.youtube.com/",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10000),
+        }
+      );
 
       if (!r.ok) {
-        const txt = await r.text();
-        console.log(`[Cobalt] ${instance}: HTTP ${r.status} - ${txt.slice(0, 100)}`);
+        console.log(`[Innertube] ${client.name}: HTTP ${r.status}`);
         continue;
       }
 
       const data = await r.json();
-      // Cobalt returns { status: "tunnel"|"redirect"|"stream", url: "..." }
-      if (data.url) {
-        console.log(`✓ [Cobalt] Got URL (status: ${data.status})`);
-        return { url: data.url, mimeType: "audio/mpeg" };
-      }
-      // Picker mode (shouldn't happen for audio-only)
-      if (data.picker && data.picker.length > 0 && data.picker[0].url) {
-        console.log(`✓ [Cobalt] Got picker URL`);
-        return { url: data.picker[0].url, mimeType: "audio/mpeg" };
-      }
-      if (data.audio) {
-        console.log(`✓ [Cobalt] Got audio URL`);
-        return { url: data.audio, mimeType: "audio/mpeg" };
+
+      if (data.playabilityStatus?.status !== "OK") {
+        const reason = data.playabilityStatus?.reason || data.playabilityStatus?.status || "unknown";
+        console.log(`[Innertube] ${client.name}: Not playable - ${reason}`);
+        continue;
       }
 
-      console.log(`[Cobalt] ${instance}: No URL in response: ${JSON.stringify(data).slice(0, 200)}`);
+      // Get audio streams from adaptiveFormats
+      const formats = data.streamingData?.adaptiveFormats || [];
+      const audioFormats = formats.filter((f: any) =>
+        f.mimeType?.startsWith("audio/") && (f.url || f.signatureCipher)
+      );
+
+      if (audioFormats.length === 0) {
+        console.log(`[Innertube] ${client.name}: No audio formats found`);
+        continue;
+      }
+
+      // Sort by bitrate (highest first) and prefer formats with direct URLs
+      audioFormats.sort((a: any, b: any) => {
+        // Prefer direct URLs over signatureCipher
+        if (a.url && !b.url) return -1;
+        if (!a.url && b.url) return 1;
+        return (b.bitrate || 0) - (a.bitrate || 0);
+      });
+
+      // Only use formats with direct URLs (signatureCipher requires JS execution)
+      const directFormats = audioFormats.filter((f: any) => f.url);
+
+      if (directFormats.length === 0) {
+        console.log(`[Innertube] ${client.name}: All formats require signature decryption`);
+        continue;
+      }
+
+      const best = directFormats[0];
+      const mime = best.mimeType?.split(";")[0] || "audio/mp4";
+      console.log(`✓ [Innertube] ${client.name}: Got audio (${mime}, ${best.bitrate}bps)`);
+      return { url: best.url, mimeType: mime };
     } catch (e) {
-      console.log(`[Cobalt] ${instance}: ${(e as Error).message}`);
+      console.log(`[Innertube] ${client.name}: ${(e as Error).message}`);
     }
   }
   return null;
 }
 
-// ── Source 3: Piped (YouTube proxy) ──
+// ── Source 2: Piped (YouTube proxy) ──
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // Only instance confirmed UP from piped-instances.kavin.rocks
   const instances = [
     "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
     "https://pipedapi.leptons.xyz",
-    "https://piped.ezero.space",
+    "https://watchapi.whatever.social",
+    "https://pipedapi.darkness.services",
   ];
 
   for (const instance of instances) {
@@ -125,13 +190,13 @@ async function tryPiped(videoId: string): Promise<{ url: string; mimeType: strin
   return null;
 }
 
-// ── Source 4: Invidious ──
+// ── Source 3: Invidious ──
 async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // From docs.invidious.io - currently healthy instances
   const instances = [
     "https://yewtu.be",
     "https://inv.nadeko.net",
     "https://invidious.nerdvpn.de",
+    "https://invidious.perennialte.ch",
   ];
 
   for (const instance of instances) {
@@ -157,8 +222,6 @@ async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: s
   return null;
 }
 
-// (Audius source removed)
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -181,7 +244,6 @@ serve(async (req) => {
 
       const audioResponse = await fetch(decodedUrl, { headers, signal: AbortSignal.timeout(30000) });
       if (!audioResponse.ok && audioResponse.status !== 206) {
-        const body = await audioResponse.text();
         return new Response(
           JSON.stringify({ error: "Audio source unavailable", success: false }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -216,48 +278,37 @@ serve(async (req) => {
     console.log(`\n===== Audio Request =====`);
     console.log(`Title: ${title} | Artist: ${artist} | VideoID: ${videoId}`);
 
-    let result: { url: string; mimeType: string; trackInfo?: any } | null = null;
-    const serverOnline = false;
+    let result: { url: string; mimeType: string } | null = null;
 
-    // 1. Cobalt (most reliable public extractor)
-    if (!result && videoId) {
-      console.log(`[1/4] Cobalt...`);
-      result = await tryCobalt(videoId);
+    // 1. YouTube Innertube API (direct, most reliable)
+    if (videoId) {
+      console.log(`[1/3] Innertube...`);
+      result = await tryInnertube(videoId);
     }
 
     // 2. Piped
     if (!result && videoId) {
-      console.log(`[2/4] Piped...`);
+      console.log(`[2/3] Piped...`);
       result = await tryPiped(videoId);
     }
 
     // 3. Invidious
     if (!result && videoId) {
-      console.log(`[3/4] Invidious...`);
+      console.log(`[3/3] Invidious...`);
       result = await tryInvidious(videoId);
-    }
-
-    // 4. Private yt-dlp server (last resort, may be blocked on datacenter IPs)
-    if (!result && videoId && YT_SERVER_URL) {
-      console.log(`[4/4] Your yt-dlp server...`);
-      const awake = await wakeServer();
-      if (awake) {
-        result = await tryYTServer(videoId, title, artist);
-      }
     }
 
     if (!result) {
       console.error("❌ All sources failed");
       return new Response(
         JSON.stringify({
-          error: "Start your KhayaBeats server on your PC to play this track. All public audio sources are currently unavailable for mainstream music.",
+          error: "Could not find an audio source for this track. Please try again later.",
           serverOnline: false,
           success: false,
         }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const isLocalUrl = result.url.includes("localhost") || result.url.includes("127.0.0.1");
@@ -272,8 +323,7 @@ serve(async (req) => {
         audioUrl: proxyEndpoint,
         directUrl: result.url,
         mimeType: result.mimeType,
-        trackInfo: result.trackInfo,
-        serverOnline,
+        serverOnline: true,
         success: true,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
