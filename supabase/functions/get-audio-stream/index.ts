@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { Innertube } from "npm:youtubei.js@latest";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,166 +7,72 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges",
 };
 
-// ── Source 1: YouTube Innertube API (direct, no third-party) ──
-async function tryInnertube(videoId: string): Promise<{ url: string; mimeType: string } | null> {
-  // Try multiple client types — Android and iOS tend to work best
-  const clients = [
-    {
-      name: "ANDROID_MUSIC",
-      context: {
-        client: {
-          clientName: "ANDROID_MUSIC",
-          clientVersion: "7.27.52",
-          androidSdkVersion: 30,
-          userAgent: "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
-          hl: "en",
-          gl: "US",
-        },
-      },
-      userAgent: "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip",
-      apiKey: "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
-    },
-    {
-      name: "ANDROID",
-      context: {
-        client: {
-          clientName: "ANDROID",
-          clientVersion: "19.29.37",
-          androidSdkVersion: 30,
-          userAgent: "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip",
-          hl: "en",
-          gl: "US",
-        },
-      },
-      userAgent: "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip",
-      apiKey: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-    },
-    {
-      name: "IOS",
-      context: {
-        client: {
-          clientName: "IOS",
-          clientVersion: "19.29.1",
-          deviceMake: "Apple",
-          deviceModel: "iPhone16,2",
-          userAgent: "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
-          hl: "en",
-          gl: "US",
-        },
-      },
-      userAgent: "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
-      apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-    },
-    {
-      name: "TV_EMBEDDED",
-      context: {
-        client: {
-          clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-          clientVersion: "2.0",
-          hl: "en",
-          gl: "US",
-        },
-        thirdParty: {
-          embedUrl: "https://www.google.com",
-        },
-      },
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
-      apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-    },
-  ];
-
-  for (const client of clients) {
-    try {
-      console.log(`[Innertube] Trying ${client.name}...`);
-
-      const payload = {
-        videoId,
-        context: client.context,
-        contentCheckOk: true,
-        racyCheckOk: true,
-        playbackContext: {
-          contentPlaybackContext: {
-            signatureTimestamp: 20073,
-          },
-        },
-      };
-
-      const r = await fetch(
-        `https://www.youtube.com/youtubei/v1/player?key=${client.apiKey}&prettyPrint=false`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": client.userAgent,
-            "X-Youtube-Client-Name": "3",
-            "X-Youtube-Client-Version": client.context.client.clientVersion,
-            "Origin": "https://www.youtube.com",
-            "Referer": "https://www.youtube.com/",
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(10000),
-        }
-      );
-
-      if (!r.ok) {
-        console.log(`[Innertube] ${client.name}: HTTP ${r.status}`);
-        continue;
-      }
-
-      const data = await r.json();
-
-      if (data.playabilityStatus?.status !== "OK") {
-        const reason = data.playabilityStatus?.reason || data.playabilityStatus?.status || "unknown";
-        console.log(`[Innertube] ${client.name}: Not playable - ${reason}`);
-        continue;
-      }
-
-      // Get audio streams from adaptiveFormats
-      const formats = data.streamingData?.adaptiveFormats || [];
-      const audioFormats = formats.filter((f: any) =>
-        f.mimeType?.startsWith("audio/") && (f.url || f.signatureCipher)
-      );
-
-      if (audioFormats.length === 0) {
-        console.log(`[Innertube] ${client.name}: No audio formats found`);
-        continue;
-      }
-
-      // Sort by bitrate (highest first) and prefer formats with direct URLs
-      audioFormats.sort((a: any, b: any) => {
-        // Prefer direct URLs over signatureCipher
-        if (a.url && !b.url) return -1;
-        if (!a.url && b.url) return 1;
-        return (b.bitrate || 0) - (a.bitrate || 0);
-      });
-
-      // Only use formats with direct URLs (signatureCipher requires JS execution)
-      const directFormats = audioFormats.filter((f: any) => f.url);
-
-      if (directFormats.length === 0) {
-        console.log(`[Innertube] ${client.name}: All formats require signature decryption`);
-        continue;
-      }
-
-      const best = directFormats[0];
-      const mime = best.mimeType?.split(";")[0] || "audio/mp4";
-      console.log(`✓ [Innertube] ${client.name}: Got audio (${mime}, ${best.bitrate}bps)`);
-      return { url: best.url, mimeType: mime };
-    } catch (e) {
-      console.log(`[Innertube] ${client.name}: ${(e as Error).message}`);
+// ── Source 1: youtubei.js (handles signature decryption) ──
+async function tryYouTubeJS(videoId: string): Promise<{ url: string; mimeType: string } | null> {
+  try {
+    console.log(`[YouTubeJS] Creating client...`);
+    const yt = await Innertube.create({ retrieve_player: true });
+    
+    console.log(`[YouTubeJS] Getting info for ${videoId}...`);
+    const info = await yt.getBasicInfo(videoId);
+    
+    if (!info.streaming_data) {
+      console.log(`[YouTubeJS] No streaming data`);
+      return null;
     }
+
+    // Get audio-only adaptive formats
+    const audioFormats = (info.streaming_data.adaptive_formats || [])
+      .filter((f: any) => f.mime_type?.startsWith("audio/") && f.decipher)
+      .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+
+    if (audioFormats.length === 0) {
+      // Try getting URL directly
+      const allAudio = (info.streaming_data.adaptive_formats || [])
+        .filter((f: any) => f.mime_type?.startsWith("audio/"));
+      
+      if (allAudio.length === 0) {
+        console.log(`[YouTubeJS] No audio formats found`);
+        return null;
+      }
+
+      // Try to get the decipher URL
+      const best = allAudio.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      const url = best.decipher?.(yt.session.player) || best.url;
+      
+      if (!url) {
+        console.log(`[YouTubeJS] Could not decipher URL`);
+        return null;
+      }
+      
+      const mime = best.mime_type?.split(";")[0] || "audio/mp4";
+      console.log(`✓ [YouTubeJS] Got audio (${mime}, ${best.bitrate}bps)`);
+      return { url, mimeType: mime };
+    }
+
+    const best = audioFormats[0];
+    const url = best.decipher?.(yt.session.player) || best.url;
+    if (!url) {
+      console.log(`[YouTubeJS] Could not get URL from best format`);
+      return null;
+    }
+    
+    const mime = best.mime_type?.split(";")[0] || "audio/mp4";
+    console.log(`✓ [YouTubeJS] Got audio (${mime}, ${best.bitrate}bps)`);
+    return { url, mimeType: mime };
+  } catch (e) {
+    console.log(`[YouTubeJS] Error: ${(e as Error).message}`);
+    return null;
   }
-  return null;
 }
 
-// ── Source 2: Piped (YouTube proxy) ──
+// ── Source 2: Piped ──
 async function tryPiped(videoId: string): Promise<{ url: string; mimeType: string } | null> {
   const instances = [
     "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
-    "https://pipedapi.leptons.xyz",
-    "https://watchapi.whatever.social",
     "https://pipedapi.darkness.services",
+    "https://watchapi.whatever.social",
   ];
 
   for (const instance of instances) {
@@ -196,7 +103,6 @@ async function tryInvidious(videoId: string): Promise<{ url: string; mimeType: s
     "https://yewtu.be",
     "https://inv.nadeko.net",
     "https://invidious.nerdvpn.de",
-    "https://invidious.perennialte.ch",
   ];
 
   for (const instance of instances) {
@@ -280,10 +186,10 @@ serve(async (req) => {
 
     let result: { url: string; mimeType: string } | null = null;
 
-    // 1. YouTube Innertube API (direct, most reliable)
+    // 1. YouTubeJS (direct extraction with signature decryption)
     if (videoId) {
-      console.log(`[1/3] Innertube...`);
-      result = await tryInnertube(videoId);
+      console.log(`[1/3] YouTubeJS...`);
+      result = await tryYouTubeJS(videoId);
     }
 
     // 2. Piped
@@ -311,10 +217,7 @@ serve(async (req) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const isLocalUrl = result.url.includes("localhost") || result.url.includes("127.0.0.1");
-    const proxyEndpoint = isLocalUrl
-      ? result.url
-      : `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
+    const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(result.url)}`;
 
     console.log(`✅ Audio ready!`);
 
