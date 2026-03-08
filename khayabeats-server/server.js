@@ -18,10 +18,12 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+const OAUTH_CACHE_DIR = path.join(__dirname, 'storage', 'yt-dlp-cache');
 
 const CONFIG = {
   CACHE_DIR: path.join(__dirname, 'storage', 'music-cache'),
   TEMP_DIR: path.join(__dirname, 'storage', 'temp'),
+  OAUTH_CACHE_DIR,
   MAX_CACHE_SIZE_GB: 50,
   CACHE_CLEANUP_INTERVAL: 60 * 60 * 1000,
   ITUNES_API: 'https://itunes.apple.com',
@@ -31,6 +33,8 @@ const CONFIG = {
   RETRY_BACKOFF_MS: 1500,
   YT_DLP_PATH: getYtDlpPath(),
   COOKIES_FILE: fs.existsSync(COOKIES_PATH) ? COOKIES_PATH : null,
+  USE_OAUTH: process.env.YT_OAUTH_REFRESH_TOKEN ? true : false,
+  OAUTH_REFRESH_TOKEN: process.env.YT_OAUTH_REFRESH_TOKEN || null,
 };
 
 [CONFIG.CACHE_DIR, CONFIG.TEMP_DIR].forEach(dir => {
