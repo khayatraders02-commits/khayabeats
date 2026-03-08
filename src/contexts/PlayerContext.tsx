@@ -233,7 +233,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
         
         // Wait for audio to be ready
         await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Load timeout')), 20000);
+          const timeout = setTimeout(() => reject(new Error('Load timeout')), STREAM_READY_TIMEOUT_MS);
           
           const cleanup = () => {
             clearTimeout(timeout);
