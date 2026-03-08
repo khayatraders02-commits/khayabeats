@@ -255,7 +255,7 @@ async function searchInvidiousAPI(query: string, maxResults: number): Promise<an
       if (!Array.isArray(data) || data.length === 0) continue;
       
       const results = data
-        .filter((item: any) => item.type === "video" && item.lengthSeconds > 30 && item.lengthSeconds < 720)
+        .filter((item: any) => item.type === "video" && item.lengthSeconds > 30 && item.lengthSeconds < 600 && !JUNK_TITLE_PATTERNS.some(p => p.test(item.title || '')))
         .slice(0, maxResults)
         .map((item: any) => {
           const { artist, cleanTitle } = extractArtist(item.title || '', item.author || '');
