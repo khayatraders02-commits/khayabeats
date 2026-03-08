@@ -84,7 +84,7 @@ async function tryRenderServer(videoId: string): Promise<RenderAttempt> {
         },
         body: JSON.stringify({ videoId }),
       },
-      45000,
+      18000,
     );
 
     if (!audioReq.response.ok || !audioReq.data?.success || !audioReq.data?.audioUrl) {
