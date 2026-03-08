@@ -17,20 +17,16 @@ interface DownloadProgress {
   [videoId: string]: number;
 }
 
-const canUseLocalServerFromCurrentClient = () => {
+const canUseLocalServer = () => {
   if (typeof window === 'undefined') return true;
-
   const host = window.location.hostname;
   const protocol = window.location.protocol;
-
   if (protocol === 'file:') return true;
   return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
 };
 
-// Check if local server is reachable
 const isLocalServerOnline = async (): Promise<boolean> => {
-  if (!canUseLocalServerFromCurrentClient()) return false;
-
+  if (!canUseLocalServer()) return false;
   try {
     const res = await fetch(`${LOCAL_SERVER_URL}/health`, { signal: AbortSignal.timeout(3000) });
     return res.ok;
@@ -89,14 +85,33 @@ export const useDownload = () => {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
       const toastId = silent ? null : toast.loading(`Downloading "${track.title}"...`);
 
-      let audioUrl: string;
+      let audioUrl: string | null = null;
 
-      // Try local server first
+      // Strategy 1: Local server (only when running on same machine)
       const serverOnline = await isLocalServerOnline();
       if (serverOnline) {
-        audioUrl = `${LOCAL_SERVER_URL}/offline/download/${track.videoId}`;
-      } else {
-        // Fallback: get audio URL from edge function then download the audio
+        // First trigger the download/cache on server, then use the stream URL
+        try {
+          const audioRes = await fetch(`${LOCAL_SERVER_URL}/audio-url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: track.videoId }),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (audioRes.ok) {
+            const data = await audioRes.json();
+            if (data.success) {
+              // Use the offline download endpoint which sends full file as attachment
+              audioUrl = `${LOCAL_SERVER_URL}/offline/download/${track.videoId}`;
+            }
+          }
+        } catch (e) {
+          console.log('Local server download trigger failed:', e);
+        }
+      }
+
+      // Strategy 2: Edge function fallback (for cloud/web users)
+      if (!audioUrl) {
         const { data, error } = await supabase.functions.invoke('get-audio-stream', {
           body: {
             videoId: track.videoId,
@@ -106,10 +121,20 @@ export const useDownload = () => {
         });
 
         if (error || !data?.success || !data?.audioUrl) {
-          throw new Error('Could not get audio source for download');
+          throw new Error(data?.error || 'Could not find audio source. Make sure the local server is running.');
         }
 
-        audioUrl = data.audioUrl;
+        // Don't use localhost URLs from edge function (they can't be reached from browser)
+        const url = data.audioUrl as string;
+        if (url.includes('localhost') || url.includes('127.0.0.1')) {
+          throw new Error('Audio source requires local server. Please start the server on your PC.');
+        }
+
+        audioUrl = url;
+      }
+
+      if (!audioUrl) {
+        throw new Error('No audio source available for download');
       }
 
       const success = await saveToIndexedDB(
