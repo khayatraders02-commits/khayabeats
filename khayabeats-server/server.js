@@ -732,6 +732,7 @@ app.listen(PORT, () => {
 ║                                                    ║
 ║   ✅ Single process — no separate engine needed    ║
 ║   ✅ Just run: npm start                           ║
+║   🍪 Cookies: ${CONFIG.COOKIES_FILE ? 'LOADED ✅' : 'NOT FOUND ⚠️'}
 ║                                                    ║
 ╚════════════════════════════════════════════════════╝
   `);
@@ -745,6 +746,18 @@ app.listen(PORT, () => {
       `);
     } else {
       console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+    }
+
+    if (!CONFIG.COOKIES_FILE) {
+      console.warn(`
+⚠️  No cookies.txt found!
+    YouTube may block requests with "Sign in to confirm you're not a bot".
+    
+    To fix this:
+    1. Export cookies from your browser using a browser extension (e.g., "Get cookies.txt LOCALLY")
+    2. Place the cookies.txt file in the server root directory
+    3. Or POST it to /upload-cookies endpoint
+      `);
     }
   });
 });
