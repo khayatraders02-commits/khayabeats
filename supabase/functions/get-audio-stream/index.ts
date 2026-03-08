@@ -28,7 +28,7 @@ async function tryYTServer(videoId: string, title?: string, artist?: string): Pr
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ videoId, title, artist }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(60000),
     });
     if (!r.ok) { console.log(`[YT-Server] HTTP ${r.status}`); return null; }
     const d = await r.json();
