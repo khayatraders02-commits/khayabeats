@@ -199,55 +199,26 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
           console.log('Playing from offline storage');
           audioSource = URL.createObjectURL(offline.blob);
         } else {
-          // TRY LOCAL YT-DLP SERVER FIRST (runs on user's PC)
-          let localServerOnline = false;
-          
-          try {
-            console.log('[Server] Trying yt-dlp server...');
-            const serverUrl = getAudioServerUrl();
-            const localResponse = await fetch(`${serverUrl}/audio-url`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                videoId: track.videoId, 
-                title: track.title, 
-                artist: track.artist 
-              }),
-              signal: AbortSignal.timeout(110000), // wait for engine queue without duplicate retries
-            });
-            
-            if (localResponse.ok) {
-              const localData = await localResponse.json();
-              if (localData.success && localData.audioUrl) {
-                console.log('[LocalServer] ✓ Got audio from local server');
-                audioSource = localData.audioUrl;
-                localServerOnline = true;
-              }
-            }
-          } catch (e) {
-            console.log('[LocalServer] Offline, falling back to cloud...');
-          }
-          
-          // FALLBACK: Use cloud edge function if local server is offline
-          if (!localServerOnline) {
-            const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-              body: { 
-                videoId: track.videoId,
-                title: track.title,
-                artist: track.artist,
-              },
-            });
+          // Use cloud edge function (handles all fallback sources)
+          console.log('[Cloud] Resolving audio via edge function...');
+          const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+            body: { 
+              videoId: track.videoId,
+              title: track.title,
+              artist: track.artist,
+            },
+          });
 
-            if (error) {
-              throw new Error(error.message || 'Network error');
-            }
-            
-            if (!data?.success || !data?.audioUrl) {
-              throw new Error(data?.error || 'Start the KhayaBeats server on your PC to play music');
-            }
-            
-            audioSource = data.audioUrl;
+          if (error) {
+            throw new Error(error.message || 'Network error');
           }
+          
+          if (!data?.success || !data?.audioUrl) {
+            throw new Error(data?.error || 'Could not find an audio source for this track');
+          }
+          
+          audioSource = data.audioUrl;
+          console.log('[Cloud] ✓ Got audio URL');
         }
 
         // Double check we're still loading the same track
