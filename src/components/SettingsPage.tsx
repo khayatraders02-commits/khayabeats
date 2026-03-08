@@ -33,6 +33,54 @@ export const SettingsPage = () => {
   const { quality, qualityInfo } = useAudioQuality();
   const [showSleepTimer, setShowSleepTimer] = useState(false);
   const [showAudioQuality, setShowAudioQuality] = useState(false);
+  const [showServerDialog, setShowServerDialog] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [authStatus, setAuthStatus] = useState<any>(null);
+  const [checkingAuth, setCheckingAuth] = useState(false);
+  const cookieFileRef = useRef<HTMLInputElement>(null);
+  const { isOnline, serverUrl, checkServerHealth } = useServerStatus();
+
+  const checkAuthStatus = async () => {
+    setCheckingAuth(true);
+    try {
+      const r = await fetch(`${serverUrl}/auth-status`, { signal: AbortSignal.timeout(8000) });
+      const data = await r.json();
+      setAuthStatus(data);
+    } catch {
+      setAuthStatus({ status: 'unreachable' });
+    } finally {
+      setCheckingAuth(false);
+    }
+  };
+
+  const handleCookieUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const text = await file.text();
+      if (!text.includes('youtube.com') && !text.includes('.youtube.com')) {
+        toast.error('This doesn\'t look like a YouTube cookies file');
+        return;
+      }
+      const r = await fetch(`${serverUrl}/upload-cookies`, {
+        method: 'POST',
+        body: text,
+      });
+      const data = await r.json();
+      if (data.success !== false) {
+        toast.success('Cookies uploaded! Songs should work now.');
+        await checkAuthStatus();
+      } else {
+        toast.error(data.error || 'Upload failed');
+      }
+    } catch (err) {
+      toast.error('Failed to upload cookies. Is the server running?');
+    } finally {
+      setUploading(false);
+      if (cookieFileRef.current) cookieFileRef.current.value = '';
+    }
+  };
 
   // Load display name from profiles table on mount
   useEffect(() => {
