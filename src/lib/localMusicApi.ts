@@ -1,17 +1,16 @@
 import { Track } from '@/types/music';
 import { supabase } from '@/integrations/supabase/client';
 
+const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
 const LOCAL_SERVER_URL = 'http://localhost:3001';
 
-const canUseLocalServerFromCurrentClient = () => {
-  if (typeof window === 'undefined') return true;
-
+const getServerUrl = () => {
+  if (typeof window === 'undefined') return LOCAL_SERVER_URL;
   const host = window.location.hostname;
-  const protocol = window.location.protocol;
-
-  if (protocol === 'file:') return true;
-  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
+  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return LOCAL_SERVER_URL;
+  return REMOTE_SERVER_URL;
 };
+
 
 export interface ArtistSearchResult {
   id: string;
@@ -252,29 +251,28 @@ const fetchITunesAlbums = async (query: string): Promise<AlbumSearchResult[]> =>
  * Try local server grouped search first, fall back to cloud
  */
 export const searchMusicCatalog = async (query: string): Promise<SearchCatalogResponse> => {
-  if (canUseLocalServerFromCurrentClient()) {
-    try {
-      const res = await fetch(`${LOCAL_SERVER_URL}/search?q=${encodeURIComponent(query)}&limit=60`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.artists && data.songs) {
-          return {
-            artists: data.artists || [],
-            songs: (data.songs || []).map(mapTrack),
-            albums: data.albums || [],
-          };
-        }
-        const rawTracks = (data.results || []).map(mapTrack);
-        const songs = rankTracks(query, rawTracks).slice(0, 30);
-        const artists = deriveArtists(songs);
-        const albums = await fetchITunesAlbums(query);
-        return { artists, songs, albums };
+  const serverUrl = getServerUrl();
+  try {
+    const res = await fetch(`${serverUrl}/search?q=${encodeURIComponent(query)}&limit=60`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.artists && data.songs) {
+        return {
+          artists: data.artists || [],
+          songs: (data.songs || []).map(mapTrack),
+          albums: data.albums || [],
+        };
       }
-    } catch {
-      console.log('[Search] Local server offline, using cloud...');
+      const rawTracks = (data.results || []).map(mapTrack);
+      const songs = rankTracks(query, rawTracks).slice(0, 30);
+      const artists = deriveArtists(songs);
+      const albums = await fetchITunesAlbums(query);
+      return { artists, songs, albums };
     }
+  } catch {
+    console.log('[Search] Server offline, using cloud...');
   }
 
   try {
@@ -300,21 +298,20 @@ export const searchMusicCatalog = async (query: string): Promise<SearchCatalogRe
 export const getArtistProfile = async (artistId: string, artistNameHint?: string): Promise<ArtistProfileResponse> => {
   const artistName = artistNameHint || fromSlug(artistId);
 
-  if (canUseLocalServerFromCurrentClient()) {
-    try {
-      const res = await fetch(`${LOCAL_SERVER_URL}/artists/${artistId}?name=${encodeURIComponent(artistName)}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          ...data,
-          topSongs: (data.topSongs || []).map(mapTrack),
-        };
-      }
-    } catch {
-      console.log('[ArtistProfile] Local server offline, assembling client-side...');
+  const serverUrl = getServerUrl();
+  try {
+    const res = await fetch(`${serverUrl}/artists/${artistId}?name=${encodeURIComponent(artistName)}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        ...data,
+        topSongs: (data.topSongs || []).map(mapTrack),
+      };
     }
+  } catch {
+    console.log('[ArtistProfile] Server offline, assembling client-side...');
   }
 
   const [songsData, artistRes, albumsRes] = await Promise.all([
@@ -357,15 +354,15 @@ export const getAlbumProfile = async (
   albumTitleHint?: string,
   artistHint?: string
 ): Promise<AlbumProfileResponse> => {
-  if (canUseLocalServerFromCurrentClient()) {
-    try {
-      const params = new URLSearchParams();
-      if (albumTitleHint) params.set('title', albumTitleHint);
-      if (artistHint) params.set('artist', artistHint);
+  const serverUrl = getServerUrl();
+  try {
+    const params = new URLSearchParams();
+    if (albumTitleHint) params.set('title', albumTitleHint);
+    if (artistHint) params.set('artist', artistHint);
 
-      const res = await fetch(`${LOCAL_SERVER_URL}/albums/${encodeURIComponent(albumId)}?${params.toString()}`, {
-        signal: AbortSignal.timeout(12000),
-      });
+    const res = await fetch(`${serverUrl}/albums/${encodeURIComponent(albumId)}?${params.toString()}`, {
+      signal: AbortSignal.timeout(12000),
+    });
 
       if (res.ok) {
         const data = await res.json();
@@ -385,9 +382,8 @@ export const getAlbumProfile = async (
         };
       }
     } catch {
-      console.log('[AlbumProfile] Local server unavailable, using iTunes fallback...');
+      console.log('[AlbumProfile] Server unavailable, using iTunes fallback...');
     }
-  }
 
   try {
     const lookupRes = await withTimeout(`https://itunes.apple.com/lookup?id=${encodeURIComponent(albumId)}&entity=song`, 12000);

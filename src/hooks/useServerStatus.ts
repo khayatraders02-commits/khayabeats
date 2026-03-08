@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 // Remote server URL (set after deploying to Render/Railway/etc.)
 // Falls back to localhost for local development
-const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || '';
+const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
 const LOCAL_SERVER_URL = 'http://localhost:3001';
 
 const getServerUrl = () => {
