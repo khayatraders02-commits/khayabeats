@@ -103,7 +103,23 @@ const Auth = () => {
     }
   };
 
-  if (loading) {
+  const handleGoogleSignIn = async () => {
+    setIsGoogleLoading(true);
+    try {
+      const { error } = await lovable.auth.signInWithOAuth('google', {
+        redirect_uri: window.location.origin,
+      });
+      if (error) {
+        toast.error(error.message || 'Google sign-in failed');
+      }
+    } catch (e) {
+      toast.error('Google sign-in failed. Please try again.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
+
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <motion.div 
