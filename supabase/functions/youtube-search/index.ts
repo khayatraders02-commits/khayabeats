@@ -146,7 +146,7 @@ async function searchYouTubeAPI(query: string, maxResults: number): Promise<any[
           duration,
         };
       })
-      .filter((track: any) => isValidTrack(track.duration))
+      .filter((track: any) => isValidTrack(track.duration, track.title))
       .slice(0, maxResults);
 
     console.log(`YouTube API returned ${results.length} results`);
