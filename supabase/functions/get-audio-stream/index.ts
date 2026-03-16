@@ -54,9 +54,10 @@ async function tryRenderServer(videoId: string): Promise<RenderAttempt> {
   const baseUrl = getRenderBaseUrl();
   const streamUrl = `${baseUrl}/stream/${videoId}`;
 
+  // Quick health + auth check (parallel, short timeouts)
   const [health, auth] = await Promise.allSettled([
-    fetchJsonWithTimeout(`${baseUrl}/health`, { headers: { Accept: "application/json" } }, 15000),
-    fetchJsonWithTimeout(`${baseUrl}/auth-status`, { headers: { Accept: "application/json" } }, 8000),
+    fetchJsonWithTimeout(`${baseUrl}/health`, { headers: { Accept: "application/json" } }, 10000),
+    fetchJsonWithTimeout(`${baseUrl}/auth-status`, { headers: { Accept: "application/json" } }, 6000),
   ]);
 
   const online = health.status === "fulfilled" && health.value.response.ok;
@@ -76,86 +77,37 @@ async function tryRenderServer(videoId: string): Promise<RenderAttempt> {
       result: null,
       online: false,
       authStatus,
-      error: "Render server is offline or cold-starting too long",
+      error: "Render server is offline or cold-starting",
     };
   }
 
-  try {
-    const audioReq = await fetchJsonWithTimeout(
-      `${baseUrl}/audio-url`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ videoId }),
-      },
-      65000,
-    );
+  // Check if server is authenticated before sending stream URL
+  const authMissing =
+    authStatus &&
+    authStatus.status === "unauthenticated" &&
+    !authStatus.cookiesConfigured &&
+    !authStatus.oauthConfigured;
 
-    if (audioReq.response.ok && audioReq.data?.success && audioReq.data?.audioUrl) {
-      return {
-        result: {
-          url: audioReq.data.audioUrl,
-          mimeType: "audio/mpeg",
-        },
-        online: true,
-        authStatus,
-        error: null,
-      };
-    }
-
-    const serverError = audioReq.data?.error || `Render /audio-url failed (${audioReq.response.status})`;
-
-    if (serverError.toLowerCase().includes("timeout")) {
-      return {
-        result: {
-          url: streamUrl,
-          mimeType: "audio/mpeg",
-        },
-        online: true,
-        authStatus,
-        error: `${serverError}. Falling back to /stream endpoint.`,
-      };
-    }
-
-    const authMissing =
-      authStatus &&
-      authStatus.status === "unauthenticated" &&
-      !authStatus.cookiesConfigured &&
-      !authStatus.oauthConfigured;
-
+  if (authMissing) {
     return {
       result: null,
       online: true,
       authStatus,
-      error: authMissing
-        ? "Render server is online but not authenticated with YouTube"
-        : serverError,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Render server request failed";
-
-    if (isTimeoutError(error)) {
-      return {
-        result: {
-          url: streamUrl,
-          mimeType: "audio/mpeg",
-        },
-        online: true,
-        authStatus,
-        error: "Render /audio-url timed out. Falling back to /stream endpoint.",
-      };
-    }
-
-    return {
-      result: null,
-      online: true,
-      authStatus,
-      error: message,
+      error: "Render server is online but not authenticated with YouTube",
     };
   }
+
+  // Go directly to /stream endpoint — it downloads + streams on the fly
+  // This avoids the slow /audio-url extraction that exceeds edge function time limits
+  return {
+    result: {
+      url: streamUrl,
+      mimeType: "audio/mpeg",
+    },
+    online: true,
+    authStatus,
+    error: null,
+  };
 }
 
 async function tryPiped(videoId: string): Promise<AudioResult | null> {
