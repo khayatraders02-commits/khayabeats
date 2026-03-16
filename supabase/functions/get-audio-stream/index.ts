@@ -234,25 +234,20 @@ serve(async (req) => {
       );
     }
 
-    // 1) Render production server first
-    const renderAttempt = await tryRenderServer(videoId);
-    if (renderAttempt.result) {
-      return new Response(
-        JSON.stringify({
-          audioUrl: renderAttempt.result.url,
-          mimeType: renderAttempt.result.mimeType,
-          serverOnline: renderAttempt.online,
-          source: "render",
-          success: true,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 
-    // 2) Public source fallbacks (proxied)
-    const publicResult = (await tryPiped(videoId)) || (await tryInvidious(videoId));
+    // 1) Public source fallbacks first for cloud playback/downloads.
+    // Render is still useful, but YouTube blocks datacenter IPs often enough that
+    // returning /stream first causes the browser audio element to receive JSON error
+    // payloads instead of playable audio bytes.
+    const [pipedResult, invidiousResult, renderAttempt] = await Promise.all([
+      tryPiped(videoId),
+      tryInvidious(videoId),
+      tryRenderServer(videoId),
+    ]);
+
+    const publicResult = pipedResult || invidiousResult;
     if (publicResult) {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
       const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(publicResult.url)}`;
 
       return new Response(
@@ -268,14 +263,35 @@ serve(async (req) => {
       );
     }
 
+    // 2) Render last fallback only when public mirrors fail.
+    if (renderAttempt.result) {
+      return new Response(
+        JSON.stringify({
+          audioUrl: renderAttempt.result.url,
+          mimeType: renderAttempt.result.mimeType,
+          serverOnline: renderAttempt.online,
+          source: "render",
+          success: true,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const unauthenticatedRender =
       renderAttempt.authStatus?.status === "unauthenticated" &&
       !renderAttempt.authStatus?.cookiesConfigured &&
       !renderAttempt.authStatus?.oauthConfigured;
 
+    const blockedRender =
+      renderAttempt.online &&
+      !unauthenticatedRender &&
+      Boolean(renderAttempt.error || renderAttempt.authStatus?.cookiesConfigured || renderAttempt.authStatus?.oauthConfigured);
+
     const finalError = unauthenticatedRender
       ? "Render server is online but unauthenticated. In Settings → Server Management, upload cookies.txt or complete OAuth, then retry playback."
-      : "All audio sources are unavailable right now. Render VPS is reachable, but extraction failed.";
+      : blockedRender
+        ? "Public mirrors failed and the Render VPS could not extract this track. This usually means YouTube is blocking the server IP, so playback/downloads cannot rely on Render for this song right now."
+        : "All audio sources are unavailable right now.";
 
     return new Response(
       JSON.stringify({
