@@ -7,6 +7,26 @@ const METADATA_STORE = 'metadata';
 
 let dbInstance: IDBDatabase | null = null;
 
+export interface DownloadFailureDetails {
+  message: string;
+  code: 'FETCH_FAILED' | 'INVALID_CONTENT_TYPE' | 'EMPTY_AUDIO' | 'NO_READER' | 'INDEXED_DB_ERROR';
+  status?: number;
+  contentType?: string;
+  bodySnippet?: string;
+}
+
+export interface DownloadTrackResult {
+  success: boolean;
+  error?: DownloadFailureDetails;
+}
+
+const AUDIO_CONTENT_TYPE_RE = /^(audio\/|application\/octet-stream)/i;
+
+const looksLikeTextPayload = (snippet: string) => {
+  const value = snippet.trim().toLowerCase();
+  return value.startsWith('{') || value.startsWith('<!doctype') || value.startsWith('<html') || value.startsWith('error');
+};
+
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     if (dbInstance) {
@@ -49,20 +69,60 @@ export const downloadTrack = async (
   track: Track,
   audioUrl: string,
   onProgress?: (progress: number) => void
-): Promise<boolean> => {
+): Promise<DownloadTrackResult> => {
   try {
     const db = await initDB();
 
     // Fetch the audio with progress tracking
     const response = await fetch(audioUrl);
-    if (!response.ok) throw new Error('Failed to fetch audio');
+    const contentType = response.headers.get('content-type') || '';
+
+    if (!response.ok) {
+      const bodySnippet = (await response.text()).slice(0, 500);
+      return {
+        success: false,
+        error: {
+          code: 'FETCH_FAILED',
+          message: bodySnippet || 'Failed to fetch audio',
+          status: response.status,
+          contentType,
+          bodySnippet,
+        },
+      };
+    }
+
+    if (contentType && !AUDIO_CONTENT_TYPE_RE.test(contentType)) {
+      const bodySnippet = (await response.text()).slice(0, 500);
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_CONTENT_TYPE',
+          message: looksLikeTextPayload(bodySnippet)
+            ? bodySnippet || 'Audio source returned an error payload instead of audio'
+            : `Audio source returned unsupported content type: ${contentType}`,
+          status: response.status,
+          contentType,
+          bodySnippet,
+        },
+      };
+    }
 
     const contentLength = response.headers.get('content-length');
     const total = contentLength ? parseInt(contentLength, 10) : 0;
     let loaded = 0;
 
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No reader available');
+    if (!reader) {
+      return {
+        success: false,
+        error: {
+          code: 'NO_READER',
+          message: 'Audio response stream was not readable',
+          status: response.status,
+          contentType,
+        },
+      };
+    }
 
     const chunks: Uint8Array[] = [];
 
@@ -78,7 +138,33 @@ export const downloadTrack = async (
       }
     }
 
-    const audioBlob = new Blob(chunks as BlobPart[], { type: response.headers.get('content-type') || 'audio/mpeg' });
+    if (loaded === 0) {
+      return {
+        success: false,
+        error: {
+          code: 'EMPTY_AUDIO',
+          message: 'Audio download was empty',
+          status: response.status,
+          contentType,
+        },
+      };
+    }
+
+    const firstChunkSnippet = new TextDecoder().decode((chunks[0] || new Uint8Array()).slice(0, 200));
+    if (!AUDIO_CONTENT_TYPE_RE.test(contentType || 'audio/unknown') && looksLikeTextPayload(firstChunkSnippet)) {
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_CONTENT_TYPE',
+          message: firstChunkSnippet || 'Audio source returned text instead of audio',
+          status: response.status,
+          contentType,
+          bodySnippet: firstChunkSnippet,
+        },
+      };
+    }
+
+    const audioBlob = new Blob(chunks as BlobPart[], { type: contentType || 'audio/mpeg' });
 
     // Store in IndexedDB
     const downloadedTrack: DownloadedTrack = {
@@ -88,11 +174,11 @@ export const downloadTrack = async (
       isDownloaded: true,
     };
 
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const transaction = db.transaction([SONGS_STORE, METADATA_STORE], 'readwrite');
 
       transaction.onerror = () => reject(transaction.error);
-      transaction.oncomplete = () => resolve(true);
+      transaction.oncomplete = () => resolve({ success: true } satisfies DownloadTrackResult);
 
       // Store the blob
       const songsStore = transaction.objectStore(SONGS_STORE);
@@ -116,7 +202,13 @@ export const downloadTrack = async (
     });
   } catch (error) {
     console.error('Download error:', error);
-    return false;
+    return {
+      success: false,
+      error: {
+        code: 'INDEXED_DB_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to save to device storage',
+      },
+    };
   }
 };
 

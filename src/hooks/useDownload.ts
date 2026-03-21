@@ -121,13 +121,14 @@ export const useDownload = () => {
         });
 
         if (error || !data?.success || !data?.audioUrl) {
-          throw new Error('Start the KhayaBeats server on your PC to download songs. Run "npm run dev" in the khayabeats-server folder.');
+          const detail = [data?.error, data?.diagnostics].filter(Boolean).join(' ');
+          throw new Error(detail || error?.message || 'No downloadable audio source is available right now.');
         }
 
         // Don't use localhost URLs from edge function (they can't be reached from browser)
         const url = data.audioUrl as string;
         if (url.includes('localhost') || url.includes('127.0.0.1')) {
-          throw new Error('Audio source requires local server. Please start the server on your PC.');
+          throw new Error('The backend returned a local-only audio URL, which cannot work in production.');
         }
 
         audioUrl = url;
@@ -137,7 +138,7 @@ export const useDownload = () => {
         throw new Error('No audio source available for download');
       }
 
-      const success = await saveToIndexedDB(
+      const result = await saveToIndexedDB(
         track,
         audioUrl,
         (progress) => {
@@ -147,7 +148,7 @@ export const useDownload = () => {
 
       if (toastId) toast.dismiss(toastId);
 
-      if (success) {
+      if (result.success) {
         try {
           await supabase.from('downloads').upsert({
             user_id: user.id,
@@ -165,7 +166,7 @@ export const useDownload = () => {
         if (!silent) toast.success(`"${track.title}" downloaded!`);
         return true;
       } else {
-        throw new Error('Failed to save to device');
+        throw new Error(result.error?.message || 'Failed to save to device');
       }
     } catch (error) {
       console.error('Download error:', error);
