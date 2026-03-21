@@ -215,11 +215,12 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
           }
           
           if (!data?.success || !data?.audioUrl) {
-            throw new Error(data?.error || 'Could not find an audio source for this track');
+            const detail = [data?.error, data?.diagnostics].filter(Boolean).join(' ');
+            throw new Error(detail || 'Could not find an audio source for this track');
           }
           
           audioSource = data.audioUrl;
-          console.log('[Cloud] ✓ Got audio URL');
+          console.log('[Cloud] ✓ Got audio URL from', data.source);
         }
 
         // Double check we're still loading the same track
@@ -290,7 +291,7 @@ export const PlayerProvider = ({ children }: PlayerProviderProps) => {
       await attemptLoad();
     } catch (error) {
       console.error('Error loading track:', error);
-      toast.error('Could not play this track. Try another one.');
+      toast.error(error instanceof Error ? error.message : 'Could not play this track. Try another one.');
       setState(prev => ({ ...prev, isPlaying: false }));
       currentVideoIdRef.current = null;
     } finally {

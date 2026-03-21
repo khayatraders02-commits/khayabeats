@@ -36,6 +36,7 @@ interface ServerStatus {
   } | null;
   isReachableFromClient: boolean;
   reason: string | null;
+  statusLabel: string | null;
 }
 
 export const useServerStatus = () => {
@@ -49,6 +50,7 @@ export const useServerStatus = () => {
     cacheStats: null,
     isReachableFromClient: true,
     reason: null,
+    statusLabel: null,
   });
 
   const checkServerHealth = useCallback(async () => {
@@ -61,6 +63,7 @@ export const useServerStatus = () => {
         cacheStats: null,
         isReachableFromClient: false,
         reason: 'Local server is only reachable when the app runs on your own device.',
+        statusLabel: 'Local only',
       }));
       return false;
     }
@@ -78,11 +81,39 @@ export const useServerStatus = () => {
 
       clearTimeout(timeoutId);
 
+      const contentType = response.headers.get('content-type') || '';
+      const bodyText = await response.text();
+
       if (!response.ok) {
-        throw new Error('Server not healthy');
+        const suspended = bodyText.includes('Service Suspended');
+        setStatus((prev) => ({
+          ...prev,
+          isOnline: false,
+          isChecking: false,
+          lastChecked: new Date(),
+          cacheStats: null,
+          isReachableFromClient: true,
+          reason: suspended ? 'Your Render music service is suspended.' : `Health check failed with status ${response.status}.`,
+          statusLabel: suspended ? 'Suspended' : 'Offline',
+        }));
+        return false;
       }
 
-      const data = await response.json();
+      if (!contentType.includes('application/json')) {
+        setStatus((prev) => ({
+          ...prev,
+          isOnline: false,
+          isChecking: false,
+          lastChecked: new Date(),
+          cacheStats: null,
+          isReachableFromClient: true,
+          reason: 'Server returned a non-JSON health response.',
+          statusLabel: 'Invalid health',
+        }));
+        return false;
+      }
+
+      const data = JSON.parse(bodyText);
       setStatus({
         isOnline: true,
         isChecking: false,
@@ -91,6 +122,7 @@ export const useServerStatus = () => {
         cacheStats: data.cache || null,
         isReachableFromClient: true,
         reason: null,
+        statusLabel: 'Online',
       });
       return true;
     } catch {
@@ -101,7 +133,8 @@ export const useServerStatus = () => {
         lastChecked: new Date(),
         cacheStats: null,
         isReachableFromClient: true,
-        reason: null,
+        reason: 'Server could not be reached from the client.',
+        statusLabel: 'Offline',
       }));
       return false;
     }

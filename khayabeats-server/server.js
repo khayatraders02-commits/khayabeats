@@ -76,6 +76,46 @@ function getYtDlpPath() {
 
 const dlStats = { total: 0, success: 0, failed: 0, active: 0, queued: 0, cacheHits: 0 };
 const inflightDownloads = new Map();
+const MAX_DIAGNOSTIC_EVENTS = 200;
+const recentDiagnostics = [];
+
+function getAuthModeSummary() {
+  if (CONFIG.USE_OAUTH) return 'oauth';
+  if (CONFIG.COOKIES_FILE) return 'cookies';
+  return 'none';
+}
+
+function trimDiagnosticText(value, max = 10000) {
+  if (!value) return '';
+  const text = String(value);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function recordDiagnostic(entry) {
+  const event = {
+    timestamp: new Date().toISOString(),
+    authMode: getAuthModeSummary(),
+    ...entry,
+  };
+
+  recentDiagnostics.unshift(event);
+  if (recentDiagnostics.length > MAX_DIAGNOSTIC_EVENTS) {
+    recentDiagnostics.length = MAX_DIAGNOSTIC_EVENTS;
+  }
+
+  return event;
+}
+
+function getDiagnosticsSummary() {
+  const latestFailure = recentDiagnostics.find((item) => item.success === false) || null;
+
+  return {
+    totalEvents: recentDiagnostics.length,
+    failures: recentDiagnostics.filter((item) => item.success === false).length,
+    successes: recentDiagnostics.filter((item) => item.success === true).length,
+    latestFailure,
+  };
+}
 
 const downloadQueue = new Queue(async (task, cb) => {
   try {
@@ -117,7 +157,19 @@ function getLatestFileByPrefix(videoId) {
 function runYtDlpDownload(videoId) {
   return new Promise((resolve, reject) => {
     const existing = findCachedFile(videoId);
-    if (existing) return resolve({ filePath: existing.filePath, cached: true });
+    if (existing) {
+      recordDiagnostic({
+        videoId,
+        source: 'yt-dlp-cache',
+        stage: 'download',
+        success: true,
+        cached: true,
+        responseType: existing.contentType || getContentType(existing.ext),
+        filePath: existing.filePath,
+      });
+
+      return resolve({ filePath: existing.filePath, cached: true });
+    }
 
     const outputTemplate = path.join(CONFIG.CACHE_DIR, `${videoId}.%(ext)s`);
     const args = [
@@ -148,6 +200,15 @@ function runYtDlpDownload(videoId) {
       if (settled) return;
       settled = true;
       proc.kill('SIGKILL');
+      recordDiagnostic({
+        videoId,
+        source: 'yt-dlp',
+        stage: 'download',
+        success: false,
+        responseType: 'process-timeout',
+        error: 'Download timeout',
+        stderr: trimDiagnosticText(stderr),
+      });
       reject(new Error('Download timeout'));
     }, CONFIG.DOWNLOAD_TIMEOUT);
 
@@ -158,17 +219,57 @@ function runYtDlpDownload(videoId) {
       clearTimeout(timeoutId);
       if (code !== 0) {
         const hint = stderr.split('\n').map(s => s.trim()).filter(Boolean).slice(-1)[0] || '';
+        recordDiagnostic({
+          videoId,
+          source: 'yt-dlp',
+          stage: 'download',
+          success: false,
+          responseType: 'process-error',
+          error: hint || `yt-dlp exited with code ${code}`,
+          exitCode: code,
+          stderr: trimDiagnosticText(stderr),
+        });
         return reject(new Error(hint || `yt-dlp exited with code ${code}`));
       }
       const cached = findCachedFile(videoId) || getLatestFileByPrefix(videoId);
-      if (!cached) return reject(new Error('Download completed but file not found'));
+      if (!cached) {
+        recordDiagnostic({
+          videoId,
+          source: 'yt-dlp',
+          stage: 'download',
+          success: false,
+          responseType: 'missing-file',
+          error: 'Download completed but file not found',
+          stderr: trimDiagnosticText(stderr),
+        });
+        return reject(new Error('Download completed but file not found'));
+      }
       console.log(`[CACHED] ${path.basename(cached.filePath)}`);
+      recordDiagnostic({
+        videoId,
+        source: 'yt-dlp',
+        stage: 'download',
+        success: true,
+        cached: false,
+        responseType: cached.contentType || getContentType(cached.ext),
+        filePath: cached.filePath,
+        stderr: trimDiagnosticText(stderr),
+      });
       resolve({ filePath: cached.filePath, cached: false });
     });
     proc.on('error', err => {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutId);
+      recordDiagnostic({
+        videoId,
+        source: 'yt-dlp',
+        stage: 'download',
+        success: false,
+        responseType: 'process-start-error',
+        error: `Failed to start yt-dlp: ${err.message}`,
+        stderr: trimDiagnosticText(stderr),
+      });
       reject(new Error(`Failed to start yt-dlp: ${err.message}`));
     });
   });
@@ -506,6 +607,7 @@ app.get('/health', (req, res) => {
       activeDownloads: inflightDownloads.size,
       stats: dlStats,
     },
+    diagnostics: getDiagnosticsSummary(),
   });
 });
 
@@ -521,6 +623,14 @@ app.get('/stream/:videoId', async (req, res) => {
     return streamFile(file.filePath, file.contentType || getContentType(file.ext), res);
   } catch (error) {
     console.error(`[ERROR] Stream failed for ${videoId}:`, error.message);
+    recordDiagnostic({
+      videoId,
+      source: 'render-stream',
+      stage: 'stream',
+      success: false,
+      responseType: 'application/json',
+      error: error.message,
+    });
     res.status(500).json({ error: 'Stream failed', message: error.message });
   }
 });
@@ -543,6 +653,14 @@ app.post('/audio-url', async (req, res) => {
     });
   } catch (error) {
     console.error('[ERROR] Audio URL failed:', error.message);
+    recordDiagnostic({
+      videoId,
+      source: 'render-audio-url',
+      stage: 'audio-url',
+      success: false,
+      responseType: 'application/json',
+      error: error.message,
+    });
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -687,11 +805,33 @@ app.get('/offline/download/:videoId', async (req, res) => {
     fs.createReadStream(file.filePath).pipe(res);
   } catch (error) {
     console.error(`[ERROR] Offline download failed for ${videoId}:`, error.message);
+    recordDiagnostic({
+      videoId,
+      source: 'render-offline-download',
+      stage: 'offline-download',
+      success: false,
+      responseType: 'application/json',
+      error: error.message,
+    });
     res.status(500).json({ error: 'Download failed', message: error.message });
   }
 });
 
 app.get('/cache/stats', (req, res) => res.json(getCacheStats()));
+
+app.get('/diagnostics/recent', (req, res) => {
+  const limit = Math.min(Number(req.query.limit || 30), MAX_DIAGNOSTIC_EVENTS);
+  const videoId = req.query.videoId ? String(req.query.videoId) : null;
+  const events = videoId
+    ? recentDiagnostics.filter((item) => item.videoId === videoId)
+    : recentDiagnostics;
+
+  res.json({
+    success: true,
+    summary: getDiagnosticsSummary(),
+    events: events.slice(0, limit),
+  });
+});
 
 // Upload cookies.txt via POST (for Render deployment)
 app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
@@ -852,6 +992,7 @@ app.get('/auth-status', (req, res) => {
     cookiesConfigured: hasCookies,
     oauthRefreshTokenSet: Boolean(CONFIG.OAUTH_REFRESH_TOKEN),
     status: (CONFIG.USE_OAUTH || hasOAuthToken) ? 'authenticated' : hasCookies ? 'cookies-mode' : 'unauthenticated',
+    diagnostics: getDiagnosticsSummary(),
   });
 });
 
