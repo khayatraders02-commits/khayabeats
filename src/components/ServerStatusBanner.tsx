@@ -4,7 +4,7 @@ import { useServerStatus } from '@/hooks/useServerStatus';
 import { cn } from '@/lib/utils';
 
 export const ServerStatusBanner = () => {
-  const { isOnline, isChecking, checkServerHealth, isReachableFromClient, reason } = useServerStatus();
+  const { isOnline, isChecking, checkServerHealth, isReachableFromClient, reason, statusLabel } = useServerStatus();
 
   return (
     <AnimatePresence>
@@ -18,17 +18,20 @@ export const ServerStatusBanner = () => {
           <div className="flex items-center gap-2">
             <ServerOff size={16} className="text-destructive" />
             <span className="text-sm font-medium text-destructive">
-              {isReachableFromClient ? 'Server Offline' : 'Local server unavailable in Cloud preview'}
+              {isReachableFromClient ? statusLabel || 'Server Offline' : 'Local server unavailable in Cloud preview'}
             </span>
           </div>
           {isReachableFromClient ? (
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={checkServerHealth}
-              className="p-1.5 rounded-full hover:bg-background/50 transition-colors"
-            >
-              <RefreshCw size={14} className="text-muted-foreground" />
-            </motion.button>
+            <div className="flex items-center gap-2">
+              {reason && <span className="text-xs text-muted-foreground max-w-[12rem] text-right">{reason}</span>}
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={checkServerHealth}
+                className="p-1.5 rounded-full hover:bg-background/50 transition-colors"
+              >
+                <RefreshCw size={14} className="text-muted-foreground" />
+              </motion.button>
+            </div>
           ) : (
             <span className="text-xs text-muted-foreground">{reason}</span>
           )}
@@ -39,7 +42,7 @@ export const ServerStatusBanner = () => {
 };
 
 export const ServerStatusIndicator = () => {
-  const { isOnline, isChecking, cacheStats, isReachableFromClient } = useServerStatus();
+  const { isOnline, isChecking, cacheStats, isReachableFromClient, statusLabel } = useServerStatus();
 
   return (
     <motion.div
@@ -70,7 +73,7 @@ export const ServerStatusIndicator = () => {
       ) : (
         <>
           <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
-          <span>{isReachableFromClient ? 'Offline' : 'Preview mode'}</span>
+          <span>{isReachableFromClient ? statusLabel || 'Offline' : 'Preview mode'}</span>
         </>
       )}
     </motion.div>

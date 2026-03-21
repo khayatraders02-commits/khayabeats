@@ -58,7 +58,7 @@ export const SearchView = () => {
       setResults(data);
     } catch (error) {
       console.error('Search error:', error);
-      toast.error('Local server search failed. Make sure server is online.');
+      toast.error('Search failed from both the server and cloud fallback.');
       setResults(emptySearch);
     } finally {
       setLoading(false);
