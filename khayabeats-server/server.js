@@ -18,6 +18,20 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+
+// Render free tier wipes the disk on every restart, so uploaded cookies vanish.
+// Restore them from env vars on boot: YOUTUBE_COOKIES (raw) or YOUTUBE_COOKIES_B64 (base64).
+try {
+  const rawCookies = process.env.YOUTUBE_COOKIES_B64
+    ? Buffer.from(process.env.YOUTUBE_COOKIES_B64, 'base64').toString('utf8')
+    : process.env.YOUTUBE_COOKIES;
+  if (rawCookies && rawCookies.trim()) {
+    fs.writeFileSync(COOKIES_PATH, rawCookies.replace(/\\n/g, '\n'));
+    console.log('[COOKIES] Restored cookies.txt from environment');
+  }
+} catch (e) {
+  console.error('[COOKIES] Failed to restore from env:', e.message);
+}
 const OAUTH_CACHE_DIR = path.join(__dirname, 'storage', 'yt-dlp-cache');
 
 const CONFIG = {
