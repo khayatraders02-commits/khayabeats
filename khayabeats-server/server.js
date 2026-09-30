@@ -669,7 +669,7 @@ app.post('/audio-url', security.requireKey, async (req, res) => {
     console.error('[ERROR] Audio URL failed:', error.message);
     recordDiagnostic({
       videoId,
-      source: 'render-audio-url',
+      source: 'home-audio-url',
       stage: 'audio-url',
       success: false,
       responseType: 'application/json',
@@ -878,7 +878,7 @@ app.get('/cookies-status', security.requireKey, (req, res) => {
 });
 
 // OAuth setup — initiates the OAuth device flow
-app.post('/oauth-setup', async (req, res) => {
+app.post('/oauth-setup', security.requireKey, async (req, res) => {
   try {
     console.log('[OAUTH] Starting OAuth device flow...');
     
@@ -985,8 +985,8 @@ app.post('/oauth-setup', async (req, res) => {
     res.json({
       success: false,
       message: 'Could not start OAuth flow. Your yt-dlp version may not support OAuth device flow.',
-      hint: 'Try updating yt-dlp: the Dockerfile should download the latest release.',
-      alternative: 'You can export cookies from your browser and upload them via POST /upload-cookies instead.',
+      hint: 'Run UPDATE.bat to update yt-dlp.',
+      alternative: 'Export cookies.txt and run IMPORT-COOKIES.bat instead.',
     });
     
   } catch (error) {
