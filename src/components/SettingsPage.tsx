@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { 
   Settings, ChevronRight, User, Bell, Shield, FileText, 
   HelpCircle, LogOut, Camera, Moon, Globe, Download, Trash2, Phone, RefreshCw, Clock, Disc3,
-  Server, Upload, CheckCircle, XCircle, Loader2
+  Server, CheckCircle, XCircle, Loader2
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
