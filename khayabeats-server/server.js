@@ -1,9 +1,12 @@
 /**
- * KHAYABEATS Server v3.0
- * 
+ * KHAYABEATS Server v4.0 (Home PC edition)
+ *
  * Single-process server: API + yt-dlp engine combined.
- * No separate engine process needed — just `npm start`.
+ * Runs on a Windows PC and is published through Tailscale Funnel.
  */
+
+// Loads .env first so every setting below can read it.
+const security = require('./security');
 
 const express = require('express');
 const cors = require('cors');
@@ -15,7 +18,9 @@ const NodeCache = require('node-cache');
 const Queue = require('better-queue');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+app.set('trust proxy', 'loopback');
+const PORT = Number(process.env.PORT || 3001);
+const HOST = process.env.HOST || '127.0.0.1';
 
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 
@@ -57,6 +62,8 @@ const CONFIG = {
 
 // Helper: get auth args for yt-dlp (OAuth preferred, cookies fallback)
 function getAuthArgs() {
+  // Re-check every time so IMPORT-COOKIES.bat works without a restart.
+  CONFIG.COOKIES_FILE = fs.existsSync(COOKIES_PATH) ? COOKIES_PATH : null;
   const args = [];
   if (CONFIG.USE_OAUTH) {
     args.push('--username', 'oauth', '--password', CONFIG.OAUTH_REFRESH_TOKEN || '');
@@ -69,8 +76,9 @@ function getAuthArgs() {
 
 const metadataCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 });
 
-app.use(cors());
-app.use(express.json());
+app.use(cors(security.corsOptions));
+app.use(express.json({ limit: '32kb' }));
+app.use(security.rateLimit({ windowMs: 60 * 1000, max: 240 }));
 
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
@@ -589,46 +597,38 @@ async function fetchITunesArtist(name) {
 
 // ==================== ROUTES ====================
 
+let selfTest = { ok: null, checkedAt: null, error: null };
+
 app.get('/', (req, res) => {
-  res.json({
-    name: 'KhayaBeats Server',
-    status: 'online',
-    version: '3.0.0',
-    endpoints: [
-      'GET  /health',
-      'GET  /stream/:videoId',
-      'POST /audio-url',
-      'GET  /search?q=',
-      'GET  /artists/:id',
-      'GET  /albums/:id',
-      'GET  /offline/download/:videoId',
-      'GET  /cache/stats',
-    ],
-  });
+  res.json({ name: 'KhayaBeats Server', status: 'online', version: '4.0.0' });
 });
 
+// Public health check — no secrets or error details.
 app.get('/health', (req, res) => {
+  const summary = getDiagnosticsSummary();
   res.json({
     status: 'ok',
     server: 'khayabeats',
-    version: '3.0.0',
+    version: '4.0.0',
+    host: 'home-pc',
     uptime: process.uptime(),
     cache: getCacheStats(),
+    keyConfigured: Boolean(security.SERVER_KEY),
+    youtubeAuth: CONFIG.USE_OAUTH ? 'oauth' : fs.existsSync(COOKIES_PATH) ? 'cookies' : 'none',
+    selfTest: { ok: selfTest.ok, checkedAt: selfTest.checkedAt },
     engine: {
       online: true,
-      embedded: true,
       queue: dlStats.queued,
       activeDownloads: inflightDownloads.size,
       stats: dlStats,
     },
-    diagnostics: getDiagnosticsSummary(),
+    diagnostics: { totalEvents: summary.totalEvents, failures: summary.failures, successes: summary.successes },
   });
 });
 
-// Stream a cached/downloaded track
-app.get('/stream/:videoId', async (req, res) => {
+// Stream a cached/downloaded track (signed link or server key required)
+app.get('/stream/:videoId', security.requireKeyOrSignature, async (req, res) => {
   const { videoId } = req.params;
-  if (!videoId) return res.status(400).json({ error: 'Video ID required' });
 
   try {
     const result = await enqueueDownload(videoId);
@@ -639,7 +639,7 @@ app.get('/stream/:videoId', async (req, res) => {
     console.error(`[ERROR] Stream failed for ${videoId}:`, error.message);
     recordDiagnostic({
       videoId,
-      source: 'render-stream',
+      source: 'home-stream',
       stage: 'stream',
       success: false,
       responseType: 'application/json',
@@ -650,9 +650,9 @@ app.get('/stream/:videoId', async (req, res) => {
 });
 
 // Get audio URL (triggers download if needed, returns stream URL)
-app.post('/audio-url', async (req, res) => {
-  const { videoId } = req.body;
-  if (!videoId) return res.status(400).json({ success: false, error: 'Video ID required' });
+app.post('/audio-url', security.requireKey, async (req, res) => {
+  const { videoId } = req.body || {};
+  if (!security.isValidVideoId(videoId)) return res.status(400).json({ success: false, error: 'Valid video ID required' });
 
   try {
     const wasCached = Boolean(findCachedFile(videoId));
@@ -669,7 +669,7 @@ app.post('/audio-url', async (req, res) => {
     console.error('[ERROR] Audio URL failed:', error.message);
     recordDiagnostic({
       videoId,
-      source: 'render-audio-url',
+      source: 'home-audio-url',
       stage: 'audio-url',
       success: false,
       responseType: 'application/json',
@@ -807,21 +807,23 @@ app.get('/albums/:albumId', async (req, res) => {
   }
 });
 
-// Download for offline — streams the file as an attachment
-app.get('/offline/download/:videoId', async (req, res) => {
+// Download for offline — streams the file as an attachment (signed link or key)
+app.get('/offline/download/:videoId', security.requireKeyOrSignature, async (req, res) => {
   const { videoId } = req.params;
   try {
     const result = await enqueueDownload(videoId);
     const file = findCachedFile(videoId) || result;
     const ext = file.ext || path.extname(file.filePath);
+    const stat = fs.statSync(file.filePath);
     res.setHeader('Content-Type', file.contentType || getContentType(ext));
+    res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Disposition', `attachment; filename="${videoId}${ext}"`);
     fs.createReadStream(file.filePath).pipe(res);
   } catch (error) {
     console.error(`[ERROR] Offline download failed for ${videoId}:`, error.message);
     recordDiagnostic({
       videoId,
-      source: 'render-offline-download',
+      source: 'home-offline-download',
       stage: 'offline-download',
       success: false,
       responseType: 'application/json',
@@ -833,7 +835,7 @@ app.get('/offline/download/:videoId', async (req, res) => {
 
 app.get('/cache/stats', (req, res) => res.json(getCacheStats()));
 
-app.get('/diagnostics/recent', (req, res) => {
+app.get('/diagnostics/recent', security.requireKey, (req, res) => {
   const limit = Math.min(Number(req.query.limit || 30), MAX_DIAGNOSTIC_EVENTS);
   const videoId = req.query.videoId ? String(req.query.videoId) : null;
   const events = videoId
@@ -842,17 +844,23 @@ app.get('/diagnostics/recent', (req, res) => {
 
   res.json({
     success: true,
+    selfTest,
     summary: getDiagnosticsSummary(),
     events: events.slice(0, limit),
   });
 });
 
-// Upload cookies.txt via POST (for Render deployment)
-app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
+// Upload cookies.txt (key required). On Windows, IMPORT-COOKIES.bat is easier.
+app.post('/upload-cookies', security.requireKey, express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
   try {
-    fs.writeFileSync(COOKIES_PATH, req.body);
+    const body = String(req.body || '');
+    if (!body.includes('youtube.com')) {
+      return res.status(400).json({ success: false, error: 'This does not look like a YouTube cookies.txt file' });
+    }
+    fs.writeFileSync(COOKIES_PATH, body);
     CONFIG.COOKIES_FILE = COOKIES_PATH;
     console.log('[COOKIES] cookies.txt uploaded and activated');
+    runSelfTest();
     res.json({ success: true, message: 'Cookies uploaded successfully' });
   } catch (error) {
     console.error('[COOKIES ERROR]', error.message);
@@ -861,17 +869,16 @@ app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, r
 });
 
 // Check cookies status
-app.get('/cookies-status', (req, res) => {
+app.get('/cookies-status', security.requireKey, (req, res) => {
   const exists = fs.existsSync(COOKIES_PATH);
-  res.json({ 
-    hasCookies: exists, 
-    path: exists ? COOKIES_PATH : null,
+  res.json({
+    hasCookies: exists,
     size: exists ? fs.statSync(COOKIES_PATH).size : 0,
   });
 });
 
 // OAuth setup — initiates the OAuth device flow
-app.post('/oauth-setup', async (req, res) => {
+app.post('/oauth-setup', security.requireKey, async (req, res) => {
   try {
     console.log('[OAUTH] Starting OAuth device flow...');
     
@@ -978,8 +985,8 @@ app.post('/oauth-setup', async (req, res) => {
     res.json({
       success: false,
       message: 'Could not start OAuth flow. Your yt-dlp version may not support OAuth device flow.',
-      hint: 'Try updating yt-dlp: the Dockerfile should download the latest release.',
-      alternative: 'You can export cookies from your browser and upload them via POST /upload-cookies instead.',
+      hint: 'Run UPDATE.bat to update yt-dlp.',
+      alternative: 'Export cookies.txt and run IMPORT-COOKIES.bat instead.',
     });
     
   } catch (error) {
@@ -988,30 +995,27 @@ app.post('/oauth-setup', async (req, res) => {
   }
 });
 
-// Check auth status
+// Check auth status (public, booleans only)
 app.get('/auth-status', (req, res) => {
   const hasCookies = fs.existsSync(COOKIES_PATH);
-  const hasOAuthCache = fs.existsSync(path.join(CONFIG.OAUTH_CACHE_DIR, 'youtube-nsig'));
-  
-  // Check if OAuth token files exist in cache
   let hasOAuthToken = false;
   try {
     const cacheFiles = fs.readdirSync(CONFIG.OAUTH_CACHE_DIR);
     hasOAuthToken = cacheFiles.some(f => f.includes('oauth') || f.includes('token'));
   } catch {}
-  
+
   res.json({
     method: CONFIG.USE_OAUTH ? 'oauth' : hasCookies ? 'cookies' : 'none',
     oauthConfigured: CONFIG.USE_OAUTH || hasOAuthToken,
     cookiesConfigured: hasCookies,
-    oauthRefreshTokenSet: Boolean(CONFIG.OAUTH_REFRESH_TOKEN),
-    status: (CONFIG.USE_OAUTH || hasOAuthToken) ? 'authenticated' : hasCookies ? 'cookies-mode' : 'unauthenticated',
-    diagnostics: getDiagnosticsSummary(),
+    // A home connection usually works without cookies, so "none" is not fatal.
+    status: selfTest.ok ? 'working' : (CONFIG.USE_OAUTH || hasOAuthToken) ? 'authenticated' : hasCookies ? 'cookies-mode' : 'no-cookies',
+    selfTestOk: selfTest.ok,
   });
 });
 
-app.post('/cache/cleanup', (req, res) => {
-  const { maxAgeDays = 30 } = req.body;
+app.post('/cache/cleanup', security.requireKey, (req, res) => {
+  const maxAgeDays = Math.max(1, Math.min(365, Number(req.body?.maxAgeDays) || 30));
   const deleted = cleanupCache(maxAgeDays);
   res.json({ deleted, message: `Cleaned ${deleted} old files` });
 });
@@ -1022,75 +1026,82 @@ setInterval(() => {
   if (deleted > 0) console.log(`[CLEANUP] Removed ${deleted} old files`);
 }, CONFIG.CACHE_CLEANUP_INTERVAL);
 
-// ==================== KEEP-ALIVE SELF-PING ====================
-// Prevents Render free tier from spinning down after 15 min of inactivity
-const KEEP_ALIVE_INTERVAL = 13 * 60 * 1000; // 13 minutes (under 15 min limit)
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL; // Render sets this automatically
+// ==================== SELF-TEST ====================
+// Proves YouTube extraction really works from this PC before users hit it.
+const SELF_TEST_VIDEO = process.env.SELF_TEST_VIDEO_ID || 'jNQXAC9IVRw';
 
-if (RENDER_URL) {
-  setInterval(async () => {
-    try {
-      const res = await fetch(`${RENDER_URL}/health`);
-      if (res.ok) {
-        console.log(`[KEEP-ALIVE] Pinged ${RENDER_URL}/health — OK`);
-      }
-    } catch (e) {
-      console.log(`[KEEP-ALIVE] Ping failed: ${e.message}`);
-    }
-  }, KEEP_ALIVE_INTERVAL);
-  console.log(`[KEEP-ALIVE] Self-ping enabled every 13 minutes`);
-} else {
-  console.log(`[KEEP-ALIVE] Not on Render (RENDER_EXTERNAL_URL not set), skipping self-ping`);
+function runSelfTest() {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const proc = spawn(CONFIG.YT_DLP_PATH, [
+      `https://www.youtube.com/watch?v=${SELF_TEST_VIDEO}`,
+      '-f', 'bestaudio', '-g', '--no-warnings', '--no-playlist',
+      ...getAuthArgs(),
+    ]);
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 45000);
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      selfTest = { ok: false, checkedAt: new Date().toISOString(), error: err.message };
+      resolve(selfTest);
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      const ok = code === 0 && /^https?:\/\//m.test(stdout);
+      const lastLine = stderr.split('\n').map((s) => s.trim()).filter(Boolean).slice(-1)[0] || null;
+      selfTest = {
+        ok,
+        checkedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        error: ok ? null : (lastLine || `yt-dlp exited with code ${code}`),
+      };
+      console.log(ok ? '✅ Self-test passed: YouTube extraction works from this PC' : `❌ Self-test failed: ${selfTest.error}`);
+      resolve(selfTest);
+    });
+  });
 }
+
+app.post('/self-test', security.requireKey, async (req, res) => {
+  res.json(await runSelfTest());
+});
+
+// Re-test every 30 minutes so the app status stays honest.
+setInterval(runSelfTest, 30 * 60 * 1000).unref();
 
 // ==================== START ====================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`
 ╔════════════════════════════════════════════════════╗
-║                                                    ║
-║   🎵 KHAYABEATS Server v3.0                        ║
-║                                                    ║
-║   Running on: http://localhost:${PORT}               ║
-║   Cache Dir:  ${CONFIG.CACHE_DIR}
-║   yt-dlp:     ${CONFIG.YT_DLP_PATH}
-║                                                    ║
-║   ✅ Single process — no separate engine needed    ║
-║   ✅ Just run: npm start                           ║
-║   🔐 Auth: ${CONFIG.USE_OAUTH ? 'OAuth ✅' : CONFIG.COOKIES_FILE ? 'Cookies 🍪' : 'NONE ⚠️'}
-║                                                    ║
+   🎵 KHAYABEATS Home Server v4.0
+   Listening:  http://${HOST}:${PORT}
+   Cache Dir:  ${CONFIG.CACHE_DIR}
+   yt-dlp:     ${CONFIG.YT_DLP_PATH}
+   Server key: ${security.SERVER_KEY ? 'configured ✅' : 'MISSING ⚠️  (run INSTALL.bat)'}
+   YouTube:    ${CONFIG.USE_OAUTH ? 'OAuth ✅' : fs.existsSync(COOKIES_PATH) ? 'Cookies 🍪' : 'no cookies (home internet usually fine)'}
 ╚════════════════════════════════════════════════════╝
   `);
 
-  exec(`${CONFIG.YT_DLP_PATH} --version`, (error, stdout) => {
+  exec(`"${CONFIG.YT_DLP_PATH}" --version`, (error, stdout) => {
     if (error) {
-      console.error(`
-⚠️  yt-dlp not found! Install it:
-    pip install yt-dlp
-    OR download from https://github.com/yt-dlp/yt-dlp/releases
-      `);
-    } else {
-      console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+      console.error('⚠️  yt-dlp not found. Run INSTALL.bat (Windows) or install yt-dlp.');
+      selfTest = { ok: false, checkedAt: new Date().toISOString(), error: 'yt-dlp not found' };
+      return;
     }
-
-    if (!CONFIG.USE_OAUTH && !CONFIG.COOKIES_FILE) {
-      console.warn(`
-⚠️  No authentication configured!
-    YouTube will block requests from datacenter IPs.
-    
-    RECOMMENDED — OAuth (one-time setup, auto-renews):
-    1. POST to /oauth-setup to start the OAuth flow
-    2. Follow the URL and enter the code shown
-    3. Done! Token auto-refreshes forever.
-    
-    OR set YT_OAUTH_REFRESH_TOKEN env var on Render.
-    
-    ALTERNATIVE — Cookies (manual, expires):
-    1. Export cookies from your browser
-    2. POST to /upload-cookies
-      `);
-    }
+    console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+    runSelfTest();
   });
 });
+
+function shutdown(signal) {
+  console.log(`[SHUTDOWN] ${signal} received, closing server...`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = app;

@@ -1,158 +1,98 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
-// Remote server URL (set after deploying to Render/Railway/etc.)
-// Falls back to localhost for local development
-const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
-const LOCAL_SERVER_URL = 'http://localhost:3001';
-
-const getServerUrl = () => {
-  // If a remote URL is configured, always prefer it
-  if (REMOTE_SERVER_URL) return REMOTE_SERVER_URL;
-  // Otherwise fall back to local
-  return LOCAL_SERVER_URL;
-};
-
-const canReachServer = () => {
-  const url = getServerUrl();
-  // Remote URLs are always reachable
-  if (url !== LOCAL_SERVER_URL) return true;
-  // Local server only reachable from localhost/native
-  if (typeof window === 'undefined') return true;
-  const host = window.location.hostname;
-  const protocol = window.location.protocol;
-  if (protocol === 'file:') return true;
-  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return true;
-  return false;
-};
-
-interface ServerStatus {
+/**
+ * Music server status, checked through the cloud function so the app never
+ * needs the home PC address or its private key.
+ */
+export interface ServerStatus {
   isOnline: boolean;
   isChecking: boolean;
-  serverUrl: string;
   lastChecked: Date | null;
-  cacheStats: {
-    totalFiles: number;
-    totalSizeMB: number;
-  } | null;
+  cacheStats: { totalFiles: number; totalSizeMB: number } | null;
   isReachableFromClient: boolean;
   reason: string | null;
   statusLabel: string | null;
+  selfTestOk: boolean | null;
+  youtubeAuth: string | null;
+  setupComplete: boolean;
 }
 
-export const useServerStatus = () => {
-  const serverUrl = getServerUrl();
+const initialStatus: ServerStatus = {
+  isOnline: false,
+  isChecking: true,
+  lastChecked: null,
+  cacheStats: null,
+  isReachableFromClient: true,
+  reason: null,
+  statusLabel: null,
+  selfTestOk: null,
+  youtubeAuth: null,
+  setupComplete: false,
+};
 
-  const [status, setStatus] = useState<ServerStatus>({
-    isOnline: false,
-    isChecking: true,
-    serverUrl,
-    lastChecked: null,
-    cacheStats: null,
-    isReachableFromClient: true,
-    reason: null,
-    statusLabel: null,
-  });
+export const useServerStatus = () => {
+  const [status, setStatus] = useState<ServerStatus>(initialStatus);
 
   const checkServerHealth = useCallback(async () => {
-    if (!canReachServer()) {
-      setStatus((prev) => ({
-        ...prev,
-        isOnline: false,
-        isChecking: false,
-        lastChecked: new Date(),
-        cacheStats: null,
-        isReachableFromClient: false,
-        reason: 'Local server is only reachable when the app runs on your own device.',
-        statusLabel: 'Local only',
-      }));
-      return false;
-    }
-
-    setStatus((prev) => ({ ...prev, isChecking: true, isReachableFromClient: true, reason: null }));
-
+    setStatus((prev) => ({ ...prev, isChecking: true }));
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${serverUrl}/health`, {
-        signal: controller.signal,
-        mode: 'cors',
+      const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+        body: { action: 'status' },
       });
+      if (error) throw error;
 
-      clearTimeout(timeoutId);
+      const setupComplete = Boolean(data?.serverUrlConfigured && data?.cloudKeyConfigured);
+      const online = Boolean(data?.online);
+      const keyMatches = online && Boolean(data?.keyConfigured);
 
-      const contentType = response.headers.get('content-type') || '';
-      const bodyText = await response.text();
-
-      if (!response.ok) {
-        const suspended = bodyText.includes('Service Suspended');
-        setStatus((prev) => ({
-          ...prev,
-          isOnline: false,
-          isChecking: false,
-          lastChecked: new Date(),
-          cacheStats: null,
-          isReachableFromClient: true,
-          reason: suspended ? 'Your Render music service is suspended.' : `Health check failed with status ${response.status}.`,
-          statusLabel: suspended ? 'Suspended' : 'Offline',
-        }));
-        return false;
+      let reason: string | null = null;
+      let label = 'Online';
+      if (!data?.serverUrlConfigured) {
+        reason = 'The home PC music server has not been connected yet.';
+        label = 'Not set up';
+      } else if (!online) {
+        reason = 'The home PC is off, asleep, or the music server is not running.';
+        label = 'Offline';
+      } else if (!keyMatches || !data?.cloudKeyConfigured) {
+        reason = 'The home PC is online, but its server key does not match the app.';
+        label = 'Key missing';
+      } else if (data?.selfTest === false || data?.selfTestOk === false) {
+        reason = 'The home PC is online, but YouTube blocked its last test.';
+        label = 'Blocked';
       }
 
-      if (!contentType.includes('application/json')) {
-        setStatus((prev) => ({
-          ...prev,
-          isOnline: false,
-          isChecking: false,
-          lastChecked: new Date(),
-          cacheStats: null,
-          isReachableFromClient: true,
-          reason: 'Server returned a non-JSON health response.',
-          statusLabel: 'Invalid health',
-        }));
-        return false;
-      }
-
-      const data = JSON.parse(bodyText);
       setStatus({
-        isOnline: true,
+        isOnline: online && keyMatches && Boolean(data?.cloudKeyConfigured),
         isChecking: false,
-        serverUrl,
         lastChecked: new Date(),
-        cacheStats: data.cache || null,
+        cacheStats: data?.cache || null,
         isReachableFromClient: true,
-        reason: null,
-        statusLabel: 'Online',
+        reason,
+        statusLabel: label,
+        selfTestOk: data?.selfTestOk ?? null,
+        youtubeAuth: data?.youtubeAuth ?? null,
+        setupComplete,
       });
-      return true;
+      return online;
     } catch {
       setStatus((prev) => ({
         ...prev,
         isOnline: false,
         isChecking: false,
         lastChecked: new Date(),
-        cacheStats: null,
-        isReachableFromClient: true,
-        reason: 'Server could not be reached from the client.',
-        statusLabel: 'Offline',
+        reason: 'Could not check the music server.',
+        statusLabel: 'Unknown',
       }));
       return false;
     }
-  }, [serverUrl]);
+  }, []);
 
   useEffect(() => {
     checkServerHealth();
-    const interval = setInterval(checkServerHealth, 30000);
+    const interval = setInterval(checkServerHealth, 60000);
     return () => clearInterval(interval);
   }, [checkServerHealth]);
 
-  return {
-    ...status,
-    checkServerHealth,
-    getStreamUrl: (videoId: string) => `${serverUrl}/stream/${videoId}`,
-    getAudioUrlEndpoint: () => `${serverUrl}/audio-url`,
-  };
+  return { ...status, checkServerHealth };
 };
-
-// Export for use elsewhere
-export const SERVER_URL = getServerUrl();

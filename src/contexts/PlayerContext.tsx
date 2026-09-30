@@ -4,17 +4,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getDownloadedTrack } from '@/lib/offlineStorage';
 
-// Server URLs
-const REMOTE_SERVER_URL = import.meta.env.VITE_KHAYABEATS_SERVER_URL || 'https://khayabeats-3.onrender.com';
-const LOCAL_SERVER_URL = 'http://localhost:3001';
+// The home PC may need time to fetch an uncached song before audio starts.
 const STREAM_READY_TIMEOUT_MS = 130000;
-
-const getAudioServerUrl = () => {
-  if (typeof window === 'undefined') return LOCAL_SERVER_URL;
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return LOCAL_SERVER_URL;
-  return REMOTE_SERVER_URL;
-};
 
 interface PlayerContextType extends PlayerState {
   play: (track?: Track, queue?: Track[]) => void;
