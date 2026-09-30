@@ -1017,8 +1017,8 @@ app.get('/auth-status', (req, res) => {
   });
 });
 
-app.post('/cache/cleanup', (req, res) => {
-  const { maxAgeDays = 30 } = req.body;
+app.post('/cache/cleanup', security.requireKey, (req, res) => {
+  const maxAgeDays = Math.max(1, Math.min(365, Number(req.body?.maxAgeDays) || 30));
   const deleted = cleanupCache(maxAgeDays);
   res.json({ deleted, message: `Cleaned ${deleted} old files` });
 });
@@ -1029,75 +1029,82 @@ setInterval(() => {
   if (deleted > 0) console.log(`[CLEANUP] Removed ${deleted} old files`);
 }, CONFIG.CACHE_CLEANUP_INTERVAL);
 
-// ==================== KEEP-ALIVE SELF-PING ====================
-// Prevents Render free tier from spinning down after 15 min of inactivity
-const KEEP_ALIVE_INTERVAL = 13 * 60 * 1000; // 13 minutes (under 15 min limit)
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL; // Render sets this automatically
+// ==================== SELF-TEST ====================
+// Proves YouTube extraction really works from this PC before users hit it.
+const SELF_TEST_VIDEO = process.env.SELF_TEST_VIDEO_ID || 'jNQXAC9IVRw';
 
-if (RENDER_URL) {
-  setInterval(async () => {
-    try {
-      const res = await fetch(`${RENDER_URL}/health`);
-      if (res.ok) {
-        console.log(`[KEEP-ALIVE] Pinged ${RENDER_URL}/health — OK`);
-      }
-    } catch (e) {
-      console.log(`[KEEP-ALIVE] Ping failed: ${e.message}`);
-    }
-  }, KEEP_ALIVE_INTERVAL);
-  console.log(`[KEEP-ALIVE] Self-ping enabled every 13 minutes`);
-} else {
-  console.log(`[KEEP-ALIVE] Not on Render (RENDER_EXTERNAL_URL not set), skipping self-ping`);
+function runSelfTest() {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const proc = spawn(CONFIG.YT_DLP_PATH, [
+      `https://www.youtube.com/watch?v=${SELF_TEST_VIDEO}`,
+      '-f', 'bestaudio', '-g', '--no-warnings', '--no-playlist',
+      ...getAuthArgs(),
+    ]);
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 45000);
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      selfTest = { ok: false, checkedAt: new Date().toISOString(), error: err.message };
+      resolve(selfTest);
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      const ok = code === 0 && /^https?:\/\//m.test(stdout);
+      const lastLine = stderr.split('\n').map((s) => s.trim()).filter(Boolean).slice(-1)[0] || null;
+      selfTest = {
+        ok,
+        checkedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        error: ok ? null : (lastLine || `yt-dlp exited with code ${code}`),
+      };
+      console.log(ok ? '✅ Self-test passed: YouTube extraction works from this PC' : `❌ Self-test failed: ${selfTest.error}`);
+      resolve(selfTest);
+    });
+  });
 }
+
+app.post('/self-test', security.requireKey, async (req, res) => {
+  res.json(await runSelfTest());
+});
+
+// Re-test every 30 minutes so the app status stays honest.
+setInterval(runSelfTest, 30 * 60 * 1000).unref();
 
 // ==================== START ====================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`
 ╔════════════════════════════════════════════════════╗
-║                                                    ║
-║   🎵 KHAYABEATS Server v3.0                        ║
-║                                                    ║
-║   Running on: http://localhost:${PORT}               ║
-║   Cache Dir:  ${CONFIG.CACHE_DIR}
-║   yt-dlp:     ${CONFIG.YT_DLP_PATH}
-║                                                    ║
-║   ✅ Single process — no separate engine needed    ║
-║   ✅ Just run: npm start                           ║
-║   🔐 Auth: ${CONFIG.USE_OAUTH ? 'OAuth ✅' : CONFIG.COOKIES_FILE ? 'Cookies 🍪' : 'NONE ⚠️'}
-║                                                    ║
+   🎵 KHAYABEATS Home Server v4.0
+   Listening:  http://${HOST}:${PORT}
+   Cache Dir:  ${CONFIG.CACHE_DIR}
+   yt-dlp:     ${CONFIG.YT_DLP_PATH}
+   Server key: ${security.SERVER_KEY ? 'configured ✅' : 'MISSING ⚠️  (run INSTALL.bat)'}
+   YouTube:    ${CONFIG.USE_OAUTH ? 'OAuth ✅' : fs.existsSync(COOKIES_PATH) ? 'Cookies 🍪' : 'no cookies (home internet usually fine)'}
 ╚════════════════════════════════════════════════════╝
   `);
 
-  exec(`${CONFIG.YT_DLP_PATH} --version`, (error, stdout) => {
+  exec(`"${CONFIG.YT_DLP_PATH}" --version`, (error, stdout) => {
     if (error) {
-      console.error(`
-⚠️  yt-dlp not found! Install it:
-    pip install yt-dlp
-    OR download from https://github.com/yt-dlp/yt-dlp/releases
-      `);
-    } else {
-      console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+      console.error('⚠️  yt-dlp not found. Run INSTALL.bat (Windows) or install yt-dlp.');
+      selfTest = { ok: false, checkedAt: new Date().toISOString(), error: 'yt-dlp not found' };
+      return;
     }
-
-    if (!CONFIG.USE_OAUTH && !CONFIG.COOKIES_FILE) {
-      console.warn(`
-⚠️  No authentication configured!
-    YouTube will block requests from datacenter IPs.
-    
-    RECOMMENDED — OAuth (one-time setup, auto-renews):
-    1. POST to /oauth-setup to start the OAuth flow
-    2. Follow the URL and enter the code shown
-    3. Done! Token auto-refreshes forever.
-    
-    OR set YT_OAUTH_REFRESH_TOKEN env var on Render.
-    
-    ALTERNATIVE — Cookies (manual, expires):
-    1. Export cookies from your browser
-    2. POST to /upload-cookies
-      `);
-    }
+    console.log(`✅ yt-dlp version: ${stdout.trim()}`);
+    runSelfTest();
   });
 });
+
+function shutdown(signal) {
+  console.log(`[SHUTDOWN] ${signal} received, closing server...`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = app;
