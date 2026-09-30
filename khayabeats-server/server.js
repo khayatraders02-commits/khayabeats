@@ -597,39 +597,32 @@ async function fetchITunesArtist(name) {
 
 // ==================== ROUTES ====================
 
+let selfTest = { ok: null, checkedAt: null, error: null };
+
 app.get('/', (req, res) => {
-  res.json({
-    name: 'KhayaBeats Server',
-    status: 'online',
-    version: '3.0.0',
-    endpoints: [
-      'GET  /health',
-      'GET  /stream/:videoId',
-      'POST /audio-url',
-      'GET  /search?q=',
-      'GET  /artists/:id',
-      'GET  /albums/:id',
-      'GET  /offline/download/:videoId',
-      'GET  /cache/stats',
-    ],
-  });
+  res.json({ name: 'KhayaBeats Server', status: 'online', version: '4.0.0' });
 });
 
+// Public health check — no secrets or error details.
 app.get('/health', (req, res) => {
+  const summary = getDiagnosticsSummary();
   res.json({
     status: 'ok',
     server: 'khayabeats',
-    version: '3.0.0',
+    version: '4.0.0',
+    host: 'home-pc',
     uptime: process.uptime(),
     cache: getCacheStats(),
+    keyConfigured: Boolean(security.SERVER_KEY),
+    youtubeAuth: CONFIG.USE_OAUTH ? 'oauth' : fs.existsSync(COOKIES_PATH) ? 'cookies' : 'none',
+    selfTest: { ok: selfTest.ok, checkedAt: selfTest.checkedAt },
     engine: {
       online: true,
-      embedded: true,
       queue: dlStats.queued,
       activeDownloads: inflightDownloads.size,
       stats: dlStats,
     },
-    diagnostics: getDiagnosticsSummary(),
+    diagnostics: { totalEvents: summary.totalEvents, failures: summary.failures, successes: summary.successes },
   });
 });
 
@@ -814,21 +807,23 @@ app.get('/albums/:albumId', async (req, res) => {
   }
 });
 
-// Download for offline — streams the file as an attachment
-app.get('/offline/download/:videoId', async (req, res) => {
+// Download for offline — streams the file as an attachment (signed link or key)
+app.get('/offline/download/:videoId', security.requireKeyOrSignature, async (req, res) => {
   const { videoId } = req.params;
   try {
     const result = await enqueueDownload(videoId);
     const file = findCachedFile(videoId) || result;
     const ext = file.ext || path.extname(file.filePath);
+    const stat = fs.statSync(file.filePath);
     res.setHeader('Content-Type', file.contentType || getContentType(ext));
+    res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Disposition', `attachment; filename="${videoId}${ext}"`);
     fs.createReadStream(file.filePath).pipe(res);
   } catch (error) {
     console.error(`[ERROR] Offline download failed for ${videoId}:`, error.message);
     recordDiagnostic({
       videoId,
-      source: 'render-offline-download',
+      source: 'home-offline-download',
       stage: 'offline-download',
       success: false,
       responseType: 'application/json',
@@ -840,7 +835,7 @@ app.get('/offline/download/:videoId', async (req, res) => {
 
 app.get('/cache/stats', (req, res) => res.json(getCacheStats()));
 
-app.get('/diagnostics/recent', (req, res) => {
+app.get('/diagnostics/recent', security.requireKey, (req, res) => {
   const limit = Math.min(Number(req.query.limit || 30), MAX_DIAGNOSTIC_EVENTS);
   const videoId = req.query.videoId ? String(req.query.videoId) : null;
   const events = videoId
@@ -849,17 +844,23 @@ app.get('/diagnostics/recent', (req, res) => {
 
   res.json({
     success: true,
+    selfTest,
     summary: getDiagnosticsSummary(),
     events: events.slice(0, limit),
   });
 });
 
-// Upload cookies.txt via POST (for Render deployment)
-app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
+// Upload cookies.txt (key required). On Windows, IMPORT-COOKIES.bat is easier.
+app.post('/upload-cookies', security.requireKey, express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
   try {
-    fs.writeFileSync(COOKIES_PATH, req.body);
+    const body = String(req.body || '');
+    if (!body.includes('youtube.com')) {
+      return res.status(400).json({ success: false, error: 'This does not look like a YouTube cookies.txt file' });
+    }
+    fs.writeFileSync(COOKIES_PATH, body);
     CONFIG.COOKIES_FILE = COOKIES_PATH;
     console.log('[COOKIES] cookies.txt uploaded and activated');
+    runSelfTest();
     res.json({ success: true, message: 'Cookies uploaded successfully' });
   } catch (error) {
     console.error('[COOKIES ERROR]', error.message);
@@ -868,11 +869,10 @@ app.post('/upload-cookies', express.text({ type: '*/*', limit: '1mb' }), (req, r
 });
 
 // Check cookies status
-app.get('/cookies-status', (req, res) => {
+app.get('/cookies-status', security.requireKey, (req, res) => {
   const exists = fs.existsSync(COOKIES_PATH);
-  res.json({ 
-    hasCookies: exists, 
-    path: exists ? COOKIES_PATH : null,
+  res.json({
+    hasCookies: exists,
     size: exists ? fs.statSync(COOKIES_PATH).size : 0,
   });
 });
@@ -995,25 +995,22 @@ app.post('/oauth-setup', async (req, res) => {
   }
 });
 
-// Check auth status
+// Check auth status (public, booleans only)
 app.get('/auth-status', (req, res) => {
   const hasCookies = fs.existsSync(COOKIES_PATH);
-  const hasOAuthCache = fs.existsSync(path.join(CONFIG.OAUTH_CACHE_DIR, 'youtube-nsig'));
-  
-  // Check if OAuth token files exist in cache
   let hasOAuthToken = false;
   try {
     const cacheFiles = fs.readdirSync(CONFIG.OAUTH_CACHE_DIR);
     hasOAuthToken = cacheFiles.some(f => f.includes('oauth') || f.includes('token'));
   } catch {}
-  
+
   res.json({
     method: CONFIG.USE_OAUTH ? 'oauth' : hasCookies ? 'cookies' : 'none',
     oauthConfigured: CONFIG.USE_OAUTH || hasOAuthToken,
     cookiesConfigured: hasCookies,
-    oauthRefreshTokenSet: Boolean(CONFIG.OAUTH_REFRESH_TOKEN),
-    status: (CONFIG.USE_OAUTH || hasOAuthToken) ? 'authenticated' : hasCookies ? 'cookies-mode' : 'unauthenticated',
-    diagnostics: getDiagnosticsSummary(),
+    // A home connection usually works without cookies, so "none" is not fatal.
+    status: selfTest.ok ? 'working' : (CONFIG.USE_OAUTH || hasOAuthToken) ? 'authenticated' : hasCookies ? 'cookies-mode' : 'no-cookies',
+    selfTestOk: selfTest.ok,
   });
 });
 
