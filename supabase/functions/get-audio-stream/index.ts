@@ -2,554 +2,239 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, range, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges",
 };
 
-type AudioResult = { url: string; mimeType: string };
-type ResolvedAudioResult = AudioResult & { provider: string };
-type RenderAuthStatus = {
-  method?: string;
-  status?: string;
-  cookiesConfigured?: boolean;
-  oauthConfigured?: boolean;
-};
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 
-type ProviderAttempt = {
-  provider: string;
-  category: "render" | "piped" | "invidious";
-  success: boolean;
-  status?: number;
-  contentType?: string | null;
-  error?: string;
-  scoreBefore: number;
-  scoreAfter: number;
-};
+const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const SIGNED_LINK_TTL_SECONDS = 6 * 60 * 60;
 
-type ProviderHealth = {
-  score: number;
-  successes: number;
-  failures: number;
-  lastError?: string;
-  lastSuccessAt?: string;
-  lastFailureAt?: string;
-};
-
-type ProviderResolution = {
-  result: ResolvedAudioResult | null;
-  attempts: ProviderAttempt[];
-};
-
-type RenderAttempt = {
-  result: ResolvedAudioResult | null;
+type ProviderAttempt = { provider: string; success: boolean; status?: number; error?: string };
+type HomeHealth = {
   online: boolean;
-  authStatus: RenderAuthStatus | null;
-  error: string | null;
-  attempts: ProviderAttempt[];
+  status?: number;
+  keyConfigured?: boolean;
+  youtubeAuth?: string;
+  selfTestOk?: boolean | null;
+  selfTestCheckedAt?: string | null;
+  cache?: unknown;
+  error?: string;
 };
-
-const DEFAULT_RENDER_URL = "https://khayabeats-3.onrender.com";
-const INITIAL_PROVIDER_SCORE = 100;
-const MIN_PROVIDER_SCORE = 0;
-const MAX_PROVIDER_SCORE = 100;
-const providerHealth = new Map<string, ProviderHealth>();
 
 const PIPED_INSTANCES = [
-  { name: "piped-kavin", url: "https://pipedapi.kavin.rocks" },
-  { name: "piped-private-coffee", url: "https://api.piped.private.coffee" },
-  { name: "piped-darkness", url: "https://pipedapi.darkness.services" },
-  { name: "piped-whatever", url: "https://watchapi.whatever.social" },
+  "https://pipedapi.kavin.rocks",
+  "https://api.piped.private.coffee",
 ];
-
 const INVIDIOUS_INSTANCES = [
-  { name: "invidious-yewtu", url: "https://yewtu.be" },
-  { name: "invidious-nadeko", url: "https://inv.nadeko.net" },
-  { name: "invidious-nerdvpn", url: "https://invidious.nerdvpn.de" },
+  "https://inv.nadeko.net",
+  "https://yewtu.be",
 ];
 
-function getRenderBaseUrl() {
-  return (Deno.env.get("KHAYABEATS_SERVER_URL") || DEFAULT_RENDER_URL).replace(/\/$/, "");
+// Only these hosts may be proxied, so this function is never an open proxy.
+const PROXY_HOST_SUFFIXES = [
+  ".googlevideo.com",
+  ...PIPED_INSTANCES.map((u) => new URL(u).hostname),
+  ...INVIDIOUS_INSTANCES.map((u) => new URL(u).hostname),
+];
+
+function getHomeConfig() {
+  const url = (Deno.env.get("KHAYABEATS_SERVER_URL") || "").trim().replace(/\/$/, "");
+  const key = (Deno.env.get("KHAYABEATS_SERVER_KEY") || "").trim();
+  const usable = url.startsWith("https://") && !url.includes("onrender.com");
+  return { url: usable ? url : "", key };
 }
 
-function getProviderHealth(provider: string): ProviderHealth {
-  const existing = providerHealth.get(provider);
-  if (existing) return existing;
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-  const next = {
-    score: INITIAL_PROVIDER_SCORE,
-    successes: 0,
-    failures: 0,
-  } satisfies ProviderHealth;
-  providerHealth.set(provider, next);
-  return next;
+async function hmacHex(key: string, message: string) {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function markProviderSuccess(provider: string) {
-  const current = getProviderHealth(provider);
-  const next: ProviderHealth = {
-    ...current,
-    score: Math.min(MAX_PROVIDER_SCORE, current.score + 8),
-    successes: current.successes + 1,
-    lastSuccessAt: new Date().toISOString(),
-    lastError: undefined,
-  };
-  providerHealth.set(provider, next);
-  return next.score;
+async function signedHomeUrl(baseUrl: string, key: string, route: "stream" | "offline/download", videoId: string) {
+  const exp = Math.floor(Date.now() / 1000) + SIGNED_LINK_TTL_SECONDS;
+  const sig = await hmacHex(key, `${videoId}:${exp}`);
+  return `${baseUrl}/${route}/${videoId}?exp=${exp}&sig=${sig}`;
 }
 
-function markProviderFailure(provider: string, error: string) {
-  const current = getProviderHealth(provider);
-  const next: ProviderHealth = {
-    ...current,
-    score: Math.max(MIN_PROVIDER_SCORE, current.score - 25),
-    failures: current.failures + 1,
-    lastFailureAt: new Date().toISOString(),
-    lastError: error,
-  };
-  providerHealth.set(provider, next);
-  return next.score;
-}
-
-function sortProvidersByHealth<T extends { name: string }>(providers: T[]) {
-  return [...providers].sort((a, b) => getProviderHealth(b.name).score - getProviderHealth(a.name).score);
-}
-
-function isAudioLikeContentType(contentType: string | null) {
-  if (!contentType) return true;
-  const value = contentType.toLowerCase();
-  return value.startsWith("audio/") || value.includes("application/octet-stream");
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function fetchJsonWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 12000) {
-  const response = await fetch(url, {
-    ...init,
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-
-  const text = await response.text();
-  let data: any = null;
+async function checkHome(baseUrl: string): Promise<HomeHealth> {
+  if (!baseUrl) return { online: false, error: "not-configured" };
   try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-
-  return { response, data, text };
-}
-
-function isTimeoutError(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const msg = `${error.name} ${error.message}`.toLowerCase();
-  return msg.includes("timeout") || msg.includes("timed out") || msg.includes("abort");
-}
-
-async function tryRenderServer(videoId: string): Promise<RenderAttempt> {
-  const baseUrl = getRenderBaseUrl();
-  const streamUrl = `${baseUrl}/stream/${videoId}`;
-  const attempts: ProviderAttempt[] = [];
-  const scoreBefore = getProviderHealth("render").score;
-
-  // Quick health + auth check (parallel, short timeouts)
-  const [health, auth] = await Promise.allSettled([
-    fetchJsonWithTimeout(`${baseUrl}/health`, { headers: { Accept: "application/json" } }, 10000),
-    fetchJsonWithTimeout(`${baseUrl}/auth-status`, { headers: { Accept: "application/json" } }, 6000),
-  ]);
-
-  const online = health.status === "fulfilled" && health.value.response.ok;
-  const healthContentType = health.status === "fulfilled"
-    ? health.value.response.headers.get("content-type")
-    : null;
-
-  const authStatus: RenderAuthStatus | null =
-    auth.status === "fulfilled" && auth.value.response.ok && auth.value.data
-      ? {
-          method: auth.value.data.method,
-          status: auth.value.data.status,
-          cookiesConfigured: auth.value.data.cookiesConfigured,
-          oauthConfigured: auth.value.data.oauthConfigured,
-        }
-      : null;
-
-  if (!online) {
-    const suspendedText = health.status === "fulfilled" ? (health.value.text || "") : "";
-    const error = suspendedText.includes("Service Suspended")
-      ? "Render service is suspended"
-      : "Render server is offline or cold-starting";
-    const scoreAfter = markProviderFailure("render", error);
-    attempts.push({
-      provider: "render",
-      category: "render",
-      success: false,
-      status: health.status === "fulfilled" ? health.value.response.status : undefined,
-      contentType: healthContentType,
-      error,
-      scoreBefore,
-      scoreAfter,
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
     });
-
+    const text = await res.text();
+    let data: any = null;
+    try { data = JSON.parse(text); } catch { data = null; }
+    if (!res.ok || !data || data.server !== "khayabeats") {
+      return { online: false, status: res.status, error: `Health check returned ${res.status}` };
+    }
     return {
-      result: null,
-      online: false,
-      authStatus,
-      error,
-      attempts,
-    };
-  }
-
-  // Check if server is authenticated before sending stream URL
-  const authMissing =
-    authStatus &&
-    authStatus.status === "unauthenticated" &&
-    !authStatus.cookiesConfigured &&
-    !authStatus.oauthConfigured;
-
-  if (authMissing) {
-    const scoreAfter = markProviderFailure("render", "Render server is online but not authenticated with YouTube");
-    attempts.push({
-      provider: "render",
-      category: "render",
-      success: false,
-      status: 200,
-      contentType: healthContentType,
-      error: "Render server is online but not authenticated with YouTube",
-      scoreBefore,
-      scoreAfter,
-    });
-
-    return {
-      result: null,
       online: true,
-      authStatus,
-      error: "Render server is online but not authenticated with YouTube",
-      attempts,
+      status: res.status,
+      keyConfigured: Boolean(data.keyConfigured),
+      youtubeAuth: data.youtubeAuth,
+      selfTestOk: data.selfTest?.ok ?? null,
+      selfTestCheckedAt: data.selfTest?.checkedAt ?? null,
+      cache: data.cache ?? null,
     };
+  } catch (e) {
+    return { online: false, error: errMsg(e) };
   }
-
-  // Go directly to /stream endpoint — it downloads + streams on the fly
-  // This avoids the slow /audio-url extraction that exceeds edge function time limits
-  const scoreAfter = markProviderSuccess("render");
-  attempts.push({
-    provider: "render",
-    category: "render",
-    success: true,
-    status: 200,
-    contentType: "audio/mpeg",
-    scoreBefore,
-    scoreAfter,
-  });
-
-  return {
-    result: {
-      url: streamUrl,
-      mimeType: "audio/mpeg",
-      provider: "render",
-    },
-    online: true,
-    authStatus,
-    error: null,
-    attempts,
-  };
 }
 
-async function tryPiped(videoId: string): Promise<ProviderResolution> {
-  const attempts: ProviderAttempt[] = [];
-
-  for (const provider of sortProvidersByHealth(PIPED_INSTANCES)) {
-    const scoreBefore = getProviderHealth(provider.name).score;
-
+async function tryPiped(videoId: string, attempts: ProviderAttempt[]) {
+  for (const base of PIPED_INSTANCES) {
     try {
-      const response = await fetch(`${provider.url}/streams/${videoId}`, {
-        signal: AbortSignal.timeout(4500),
-        headers: { Accept: "application/json" },
-      });
-
-      const contentType = response.headers.get("content-type");
-      if (!response.ok) {
-        throw new Error(`${provider.name} ${response.status}`);
-      }
-
-      const data = await response.json();
-      if (data.error) throw new Error(`${provider.name} ${data.error}`);
-
+      const res = await fetch(`${base}/streams/${videoId}`, { signal: AbortSignal.timeout(4500) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
       const streams = (data.audioStreams || []).filter((s: any) => s.url);
-      if (streams.length === 0) throw new Error(`${provider.name} no streams`);
-
+      if (!streams.length) throw new Error("no audio streams");
       streams.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-      const scoreAfter = markProviderSuccess(provider.name);
-      attempts.push({
-        provider: provider.name,
-        category: "piped",
-        success: true,
-        status: response.status,
-        contentType,
-        scoreBefore,
-        scoreAfter,
-      });
-
-      return {
-        result: {
-          url: streams[0].url,
-          mimeType: streams[0].mimeType || "audio/mp4",
-          provider: provider.name,
-        },
-        attempts,
-      };
-    } catch (error) {
-      const message = getErrorMessage(error);
-      const scoreAfter = markProviderFailure(provider.name, message);
-      attempts.push({
-        provider: provider.name,
-        category: "piped",
-        success: false,
-        error: message,
-        scoreBefore,
-        scoreAfter,
-      });
+      attempts.push({ provider: base, success: true });
+      return { url: streams[0].url as string, mimeType: streams[0].mimeType || "audio/mp4", provider: base };
+    } catch (e) {
+      attempts.push({ provider: base, success: false, error: errMsg(e) });
     }
   }
-
-  return { result: null, attempts };
+  return null;
 }
 
-async function tryInvidious(videoId: string): Promise<ProviderResolution> {
-  const attempts: ProviderAttempt[] = [];
-
-  for (const provider of sortProvidersByHealth(INVIDIOUS_INSTANCES)) {
-    const scoreBefore = getProviderHealth(provider.name).score;
-
+async function tryInvidious(videoId: string, attempts: ProviderAttempt[]) {
+  for (const base of INVIDIOUS_INSTANCES) {
     try {
-      const response = await fetch(`${provider.url}/api/v1/videos/${videoId}`, {
-        signal: AbortSignal.timeout(4500),
-        headers: { Accept: "application/json" },
-      });
-
-      const contentType = response.headers.get("content-type");
-      if (!response.ok) throw new Error(`${provider.name} ${response.status}`);
-
-      const data = await response.json();
-      const audioFormats = (data.adaptiveFormats || []).filter((f: any) =>
-        f.type?.includes("audio") && f.url,
-      );
-      if (audioFormats.length === 0) throw new Error(`${provider.name} no formats`);
-
-      audioFormats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-      const scoreAfter = markProviderSuccess(provider.name);
-      attempts.push({
-        provider: provider.name,
-        category: "invidious",
-        success: true,
-        status: response.status,
-        contentType,
-        scoreBefore,
-        scoreAfter,
-      });
-
-      return {
-        result: {
-          url: audioFormats[0].url,
-          mimeType: audioFormats[0].type?.split(";")[0] || "audio/mp4",
-          provider: provider.name,
-        },
-        attempts,
-      };
-    } catch (error) {
-      const message = getErrorMessage(error);
-      const scoreAfter = markProviderFailure(provider.name, message);
-      attempts.push({
-        provider: provider.name,
-        category: "invidious",
-        success: false,
-        error: message,
-        scoreBefore,
-        scoreAfter,
-      });
+      const res = await fetch(`${base}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(4500) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const formats = (data.adaptiveFormats || []).filter((f: any) => f.type?.includes("audio") && f.url);
+      if (!formats.length) throw new Error("no audio formats");
+      formats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+      attempts.push({ provider: base, success: true });
+      return { url: formats[0].url as string, mimeType: formats[0].type?.split(";")[0] || "audio/mp4", provider: base };
+    } catch (e) {
+      attempts.push({ provider: base, success: false, error: errMsg(e) });
     }
   }
+  return null;
+}
 
-  return { result: null, attempts };
+async function proxyAudio(req: Request, target: string) {
+  let parsed: URL;
+  try { parsed = new URL(target); } catch { return json({ success: false, error: "Invalid proxy URL" }, 400); }
+  const allowed = parsed.protocol === "https:" &&
+    PROXY_HOST_SUFFIXES.some((s) => parsed.hostname === s || parsed.hostname.endsWith(s.startsWith(".") ? s : `.${s}`));
+  if (!allowed) return json({ success: false, error: "Host not allowed" }, 403);
+
+  const headers: HeadersInit = { "User-Agent": "Mozilla/5.0", Accept: "*/*" };
+  const range = req.headers.get("range");
+  if (range) headers["Range"] = range;
+
+  const upstream = await fetch(parsed.toString(), { headers, signal: AbortSignal.timeout(30000) });
+  const contentType = upstream.headers.get("content-type") || "";
+  const audioLike = contentType.startsWith("audio/") || contentType.includes("octet-stream") || contentType.startsWith("video/");
+  if ((!upstream.ok && upstream.status !== 206) || !audioLike) {
+    const snippet = (await upstream.text()).slice(0, 300);
+    return json({ success: false, error: "Audio source returned a non-audio response", status: upstream.status, contentType, snippet }, 502);
+  }
+
+  const out: HeadersInit = { ...corsHeaders, "Content-Type": contentType, "Accept-Ranges": "bytes" };
+  const len = upstream.headers.get("content-length");
+  const cr = upstream.headers.get("content-range");
+  if (len) out["Content-Length"] = len;
+  if (cr) out["Content-Range"] = cr;
+  return new Response(upstream.body, { status: upstream.status, headers: out });
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const requestUrl = new URL(req.url);
+    const proxyTarget = requestUrl.searchParams.get("proxy");
+    if (proxyTarget) return await proxyAudio(req, proxyTarget);
 
-    // Proxy mode for third-party URLs
-    const proxyUrl = requestUrl.searchParams.get("proxy");
-    if (proxyUrl) {
-      const decodedUrl = decodeURIComponent(proxyUrl);
-      const rangeHeader = req.headers.get("range");
+    let body: any = {};
+    try { body = await req.json(); } catch { body = {}; }
 
-      const headers: HeadersInit = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0 Safari/537.36",
-        Accept: "*/*",
-        Referer: "https://www.youtube.com/",
-      };
-      if (rangeHeader) headers["Range"] = rangeHeader;
+    const home = getHomeConfig();
 
-      const audioResponse = await fetch(decodedUrl, {
-        headers,
-        signal: AbortSignal.timeout(30000),
-      });
-
-      const contentType = audioResponse.headers.get("content-type");
-
-      if (!audioResponse.ok && audioResponse.status !== 206) {
-        const snippet = await audioResponse.text();
-        return new Response(
-          JSON.stringify({
-            error: "Audio source unavailable",
-            success: false,
-            status: audioResponse.status,
-            contentType,
-            bodySnippet: snippet.slice(0, 500),
-          }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      if (!isAudioLikeContentType(contentType)) {
-        const snippet = await audioResponse.text();
-        return new Response(
-          JSON.stringify({
-            error: "Audio source returned a non-audio payload",
-            success: false,
-            status: audioResponse.status,
-            contentType,
-            bodySnippet: snippet.slice(0, 500),
-          }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      const responseHeaders: HeadersInit = {
-        ...corsHeaders,
-        "Content-Type": contentType || "audio/mpeg",
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=7200",
-      };
-
-      const contentLength = audioResponse.headers.get("content-length");
-      const contentRange = audioResponse.headers.get("content-range");
-      if (contentLength) responseHeaders["Content-Length"] = contentLength;
-      if (contentRange) responseHeaders["Content-Range"] = contentRange;
-
-      return new Response(audioResponse.body, {
-        status: audioResponse.status,
-        headers: responseHeaders,
+    // Status check used by the app's Settings screen and banner.
+    if (body?.action === "status") {
+      const health = await checkHome(home.url);
+      return json({
+        success: true,
+        serverUrlConfigured: Boolean(home.url),
+        cloudKeyConfigured: Boolean(home.key),
+        ...health,
       });
     }
 
-    const body = await req.json();
-    const { videoId } = body;
+    const videoId = typeof body?.videoId === "string" ? body.videoId.trim() : "";
+    if (!VIDEO_ID_RE.test(videoId)) return json({ success: false, error: "Valid video ID required" }, 400);
 
-    if (!videoId) {
-      return new Response(
-        JSON.stringify({ error: "Video ID required", success: false }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    const attempts: ProviderAttempt[] = [];
+
+    // 1) Home PC server (primary). Signed links keep the private key off devices.
+    const health = await checkHome(home.url);
+    if (health.online && home.key && health.keyConfigured) {
+      const [audioUrl, downloadUrl] = await Promise.all([
+        signedHomeUrl(home.url, home.key, "stream", videoId),
+        signedHomeUrl(home.url, home.key, "offline/download", videoId),
+      ]);
+      attempts.push({ provider: "home-pc", success: true, status: health.status });
+      return json({
+        success: true,
+        audioUrl,
+        downloadUrl,
+        mimeType: "audio/webm",
+        source: "home-pc",
+        serverOnline: true,
+        selfTestOk: health.selfTestOk,
+        providerDiagnostics: attempts,
+      });
+    }
+    attempts.push({ provider: "home-pc", success: false, status: health.status, error: health.error || "key mismatch or missing" });
+
+    // 2) Public mirrors as a last resort (often down).
+    const mirror = (await tryPiped(videoId, attempts)) || (await tryInvidious(videoId, attempts));
+    if (mirror) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const proxied = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(mirror.url)}`;
+      return json({
+        success: true,
+        audioUrl: proxied,
+        downloadUrl: proxied,
+        mimeType: mirror.mimeType,
+        source: mirror.provider,
+        serverOnline: health.online,
+        providerDiagnostics: attempts,
+      });
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    let error = "The KhayaBeats music server is offline. Make sure the home PC is on and START.bat is running.";
+    if (!home.url) error = "The music server address has not been set yet. Finish the home PC setup and save its address.";
+    else if (!home.key) error = "The music server key has not been saved in the app yet.";
+    else if (health.online && !health.keyConfigured) error = "The home PC is online but has no server key. Run INSTALL.bat again.";
 
-    // 1) Public source fallbacks first for cloud playback/downloads.
-    // Render is still useful, but YouTube blocks datacenter IPs often enough that
-    // returning /stream first causes the browser audio element to receive JSON error
-    // payloads instead of playable audio bytes.
-    const [pipedResolution, invidiousResolution, renderAttempt] = await Promise.all([
-      tryPiped(videoId),
-      tryInvidious(videoId),
-      tryRenderServer(videoId),
-    ]);
-
-    const providerDiagnostics = [
-      ...pipedResolution.attempts,
-      ...invidiousResolution.attempts,
-      ...renderAttempt.attempts,
-    ];
-
-    console.log(JSON.stringify({ videoId, providerDiagnostics }));
-
-    const publicCandidates = [pipedResolution.result, invidiousResolution.result].filter(Boolean) as ResolvedAudioResult[];
-    publicCandidates.sort((a, b) => getProviderHealth(b.provider).score - getProviderHealth(a.provider).score);
-    const publicResult = publicCandidates[0];
-
-    if (publicResult) {
-      const proxyEndpoint = `${supabaseUrl}/functions/v1/get-audio-stream?proxy=${encodeURIComponent(publicResult.url)}`;
-
-      return new Response(
-        JSON.stringify({
-          audioUrl: proxyEndpoint,
-          directUrl: publicResult.url,
-          mimeType: publicResult.mimeType,
-          serverOnline: renderAttempt.online,
-          source: publicResult.provider,
-          providerDiagnostics,
-          success: true,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    // 2) Render last fallback only when public mirrors fail.
-    if (renderAttempt.result) {
-      return new Response(
-        JSON.stringify({
-          audioUrl: renderAttempt.result.url,
-          mimeType: renderAttempt.result.mimeType,
-          serverOnline: renderAttempt.online,
-          source: renderAttempt.result.provider,
-          providerDiagnostics,
-          success: true,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    const unauthenticatedRender =
-      renderAttempt.authStatus?.status === "unauthenticated" &&
-      !renderAttempt.authStatus?.cookiesConfigured &&
-      !renderAttempt.authStatus?.oauthConfigured;
-
-    const blockedRender =
-      renderAttempt.online &&
-      !unauthenticatedRender &&
-      Boolean(renderAttempt.error || renderAttempt.authStatus?.cookiesConfigured || renderAttempt.authStatus?.oauthConfigured);
-
-    const finalError = unauthenticatedRender
-      ? "Render server is online but unauthenticated. In Settings → Server Management, upload cookies.txt or complete OAuth, then retry playback."
-      : renderAttempt.error === "Render service is suspended"
-        ? "Your Render music server is suspended, so playback and downloads cannot work until that service is restored."
-      : blockedRender
-        ? "Public mirrors failed and the Render VPS could not extract this track. This usually means YouTube is blocking the server IP, so playback/downloads cannot rely on Render for this song right now."
-        : "All audio sources are unavailable right now.";
-
-    return new Response(
-      JSON.stringify({
-        error: finalError,
-        serverOnline: renderAttempt.online,
-        renderAuth: renderAttempt.authStatus,
-        diagnostics: renderAttempt.error,
-        providerDiagnostics,
-        success: false,
-      }),
-      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (error) {
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Failed to get audio",
-        serverOnline: false,
-        success: false,
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    console.log(JSON.stringify({ videoId, attempts }));
+    return json({ success: false, error, serverOnline: health.online, providerDiagnostics: attempts }, 503);
+  } catch (e) {
+    return json({ success: false, error: errMsg(e), serverOnline: false }, 500);
   }
 });
