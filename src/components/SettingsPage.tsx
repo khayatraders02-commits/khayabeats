@@ -34,53 +34,16 @@ export const SettingsPage = () => {
   const [showSleepTimer, setShowSleepTimer] = useState(false);
   const [showAudioQuality, setShowAudioQuality] = useState(false);
   const [showServerDialog, setShowServerDialog] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [authStatus, setAuthStatus] = useState<any>(null);
-  const [checkingAuth, setCheckingAuth] = useState(false);
-  const cookieFileRef = useRef<HTMLInputElement>(null);
-  const { isOnline, serverUrl, checkServerHealth } = useServerStatus();
-
-  const checkAuthStatus = async () => {
-    setCheckingAuth(true);
-    try {
-      const r = await fetch(`${serverUrl}/auth-status`, { signal: AbortSignal.timeout(8000) });
-      const data = await r.json();
-      setAuthStatus(data);
-    } catch {
-      setAuthStatus({ status: 'unreachable' });
-    } finally {
-      setCheckingAuth(false);
-    }
-  };
-
-  const handleCookieUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      const text = await file.text();
-      if (!text.includes('youtube.com') && !text.includes('.youtube.com')) {
-        toast.error('This doesn\'t look like a YouTube cookies file');
-        return;
-      }
-      const r = await fetch(`${serverUrl}/upload-cookies`, {
-        method: 'POST',
-        body: text,
-      });
-      const data = await r.json();
-      if (data.success !== false) {
-        toast.success('Cookies uploaded! Songs should work now.');
-        await checkAuthStatus();
-      } else {
-        toast.error(data.error || 'Upload failed');
-      }
-    } catch (err) {
-      toast.error('Failed to upload cookies. Is the server running?');
-    } finally {
-      setUploading(false);
-      if (cookieFileRef.current) cookieFileRef.current.value = '';
-    }
-  };
+  const {
+    isOnline,
+    isChecking,
+    statusLabel,
+    reason,
+    selfTestOk,
+    youtubeAuth,
+    setupComplete,
+    checkServerHealth,
+  } = useServerStatus();
 
   // Load display name from profiles table on mount
   useEffect(() => {
@@ -389,98 +352,78 @@ export const SettingsPage = () => {
           </div>
         </div>
 
-        {/* Server Management */}
+        {/* Music Server */}
         <div>
           <h3 className="text-sm font-medium text-muted-foreground mb-2 px-4">Server</h3>
           <div className="kb-glass rounded-2xl overflow-hidden">
             <SettingItem
               icon={Server}
-              title="Server Status"
-              subtitle={isOnline ? 'Online ✅' : 'Offline ❌'}
+              title="Music Server"
+              subtitle={isChecking ? 'Checking…' : statusLabel || (isOnline ? 'Online' : 'Offline')}
               rightElement={
-                <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+                <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-primary' : 'bg-destructive'}`} />
               }
               onClick={() => {
                 checkServerHealth();
                 setShowServerDialog(true);
-                checkAuthStatus();
               }}
             />
           </div>
         </div>
 
-        {/* Server Dialog */}
         <Dialog open={showServerDialog} onOpenChange={setShowServerDialog}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Server size={20} />
-                Server Management
+                Home PC Music Server
               </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 py-2">
-              {/* Status */}
+            <div className="space-y-3 py-2">
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                 <span className="text-sm font-medium">Status</span>
-                <span className={`text-sm font-medium flex items-center gap-1 ${isOnline ? 'text-green-500' : 'text-red-500'}`}>
-                  {isOnline ? <><CheckCircle size={14} /> Online</> : <><XCircle size={14} /> Offline</>}
-                </span>
-              </div>
-
-              {/* Auth Status */}
-              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                <span className="text-sm font-medium">Authentication</span>
-                <span className="text-sm text-muted-foreground">
-                  {checkingAuth ? (
+                <span className={`text-sm font-medium flex items-center gap-1 ${isOnline ? 'text-primary' : 'text-destructive'}`}>
+                  {isChecking ? (
                     <Loader2 size={14} className="animate-spin" />
-                  ) : authStatus?.method === 'cookies' ? (
-                    <span className="text-green-500">Cookies ✅</span>
-                  ) : authStatus?.method === 'oauth' ? (
-                    <span className="text-green-500">OAuth ✅</span>
-                  ) : authStatus?.status === 'unreachable' ? (
-                    <span className="text-red-500">Unreachable</span>
+                  ) : isOnline ? (
+                    <><CheckCircle size={14} /> Online</>
                   ) : (
-                    <span className="text-yellow-500">Not configured</span>
+                    <><XCircle size={14} /> {statusLabel || 'Offline'}</>
                   )}
                 </span>
               </div>
 
-              {/* Cookie Upload */}
-              <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  Upload a <code className="bg-muted px-1 rounded">cookies.txt</code> file exported from your browser to authenticate with YouTube.
-                </p>
-                <input
-                  ref={cookieFileRef}
-                  type="file"
-                  accept=".txt"
-                  onChange={handleCookieUpload}
-                  className="hidden"
-                />
-                <Button
-                  onClick={() => cookieFileRef.current?.click()}
-                  disabled={uploading || !isOnline}
-                  className="w-full"
-                  variant="outline"
-                >
-                  {uploading ? (
-                    <><Loader2 size={16} className="animate-spin mr-2" /> Uploading...</>
-                  ) : (
-                    <><Upload size={16} className="mr-2" /> Upload cookies.txt</>
-                  )}
-                </Button>
-                {!isOnline && (
-                  <p className="text-xs text-destructive">Server must be online to upload cookies.</p>
-                )}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm font-medium">YouTube test</span>
+                <span className="text-sm text-muted-foreground">
+                  {selfTestOk === true ? 'Passed' : selfTestOk === false ? 'Failed' : 'Not run yet'}
+                </span>
               </div>
 
-              {/* Refresh */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full"
-                onClick={() => { checkServerHealth(); checkAuthStatus(); }}
-              >
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm font-medium">Cookies</span>
+                <span className="text-sm text-muted-foreground">
+                  {youtubeAuth === 'cookies' ? 'Loaded' : youtubeAuth === 'oauth' ? 'OAuth' : 'Not needed at home'}
+                </span>
+              </div>
+
+              {reason && <p className="text-sm text-muted-foreground">{reason}</p>}
+
+              {!setupComplete && (
+                <p className="text-sm text-muted-foreground">
+                  On the home PC, run <code className="bg-muted px-1 rounded">INSTALL.bat</code> from the
+                  <code className="bg-muted px-1 rounded ml-1">khayabeats-server\windows</code> folder, then save the address and key it shows.
+                </p>
+              )}
+
+              {selfTestOk === false && (
+                <p className="text-sm text-muted-foreground">
+                  On the home PC, run <code className="bg-muted px-1 rounded">UPDATE.bat</code>. If it still fails, run
+                  <code className="bg-muted px-1 rounded ml-1">IMPORT-COOKIES.bat</code>.
+                </p>
+              )}
+
+              <Button variant="ghost" size="sm" className="w-full" onClick={checkServerHealth}>
                 <RefreshCw size={14} className="mr-2" /> Refresh Status
               </Button>
             </div>
