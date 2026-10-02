@@ -11,29 +11,9 @@ import {
   getStorageUsage,
 } from '@/lib/offlineStorage';
 
-const LOCAL_SERVER_URL = 'http://localhost:3001';
-
 interface DownloadProgress {
   [videoId: string]: number;
 }
-
-const canUseLocalServer = () => {
-  if (typeof window === 'undefined') return true;
-  const host = window.location.hostname;
-  const protocol = window.location.protocol;
-  if (protocol === 'file:') return true;
-  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
-};
-
-const isLocalServerOnline = async (): Promise<boolean> => {
-  if (!canUseLocalServer()) return false;
-  try {
-    const res = await fetch(`${LOCAL_SERVER_URL}/health`, { signal: AbortSignal.timeout(3000) });
-    return res.ok;
-  } catch {
-    return false;
-  }
-};
 
 export const useDownload = () => {
   const { user } = useAuth();
