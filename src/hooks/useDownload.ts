@@ -11,29 +11,9 @@ import {
   getStorageUsage,
 } from '@/lib/offlineStorage';
 
-const LOCAL_SERVER_URL = 'http://localhost:3001';
-
 interface DownloadProgress {
   [videoId: string]: number;
 }
-
-const canUseLocalServer = () => {
-  if (typeof window === 'undefined') return true;
-  const host = window.location.hostname;
-  const protocol = window.location.protocol;
-  if (protocol === 'file:') return true;
-  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
-};
-
-const isLocalServerOnline = async (): Promise<boolean> => {
-  if (!canUseLocalServer()) return false;
-  try {
-    const res = await fetch(`${LOCAL_SERVER_URL}/health`, { signal: AbortSignal.timeout(3000) });
-    return res.ok;
-  } catch {
-    return false;
-  }
-};
 
 export const useDownload = () => {
   const { user } = useAuth();
@@ -85,57 +65,26 @@ export const useDownload = () => {
       setDownloading(prev => ({ ...prev, [track.videoId]: 0 }));
       const toastId = silent ? null : toast.loading(`Downloading "${track.title}"...`);
 
-      let audioUrl: string | null = null;
+      // The cloud function returns a short-lived signed link to the home PC server.
+      const { data, error } = await supabase.functions.invoke('get-audio-stream', {
+        body: {
+          videoId: track.videoId,
+          title: track.title,
+          artist: track.artist,
+        },
+      });
 
-      // Strategy 1: Local server (only when running on same machine)
-      const serverOnline = await isLocalServerOnline();
-      if (serverOnline) {
-        // First trigger the download/cache on server, then use the stream URL
-        try {
-          const audioRes = await fetch(`${LOCAL_SERVER_URL}/audio-url`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoId: track.videoId }),
-            signal: AbortSignal.timeout(120000),
-          });
-          if (audioRes.ok) {
-            const data = await audioRes.json();
-            if (data.success) {
-              // Use the offline download endpoint which sends full file as attachment
-              audioUrl = `${LOCAL_SERVER_URL}/offline/download/${track.videoId}`;
-            }
-          }
-        } catch (e) {
-          console.log('Local server download trigger failed:', e);
+      if (error || !data?.success || !(data?.downloadUrl || data?.audioUrl)) {
+        let detail = data?.error as string | undefined;
+        if (!detail && error && 'context' in error) {
+          try { detail = (await (error as any).context.json())?.error; } catch { /* ignore */ }
         }
+        throw new Error(detail || error?.message || 'No downloadable audio source is available right now.');
       }
 
-      // Strategy 2: Edge function fallback (for cloud/web users)
-      if (!audioUrl) {
-        const { data, error } = await supabase.functions.invoke('get-audio-stream', {
-          body: {
-            videoId: track.videoId,
-            title: track.title,
-            artist: track.artist,
-          },
-        });
-
-        if (error || !data?.success || !data?.audioUrl) {
-          const detail = [data?.error, data?.diagnostics].filter(Boolean).join(' ');
-          throw new Error(detail || error?.message || 'No downloadable audio source is available right now.');
-        }
-
-        // Don't use localhost URLs from edge function (they can't be reached from browser)
-        const url = data.audioUrl as string;
-        if (url.includes('localhost') || url.includes('127.0.0.1')) {
-          throw new Error('The backend returned a local-only audio URL, which cannot work in production.');
-        }
-
-        audioUrl = url;
-      }
-
-      if (!audioUrl) {
-        throw new Error('No audio source available for download');
+      const audioUrl = (data.downloadUrl || data.audioUrl) as string;
+      if (audioUrl.includes('localhost') || audioUrl.includes('127.0.0.1')) {
+        throw new Error('The music server returned a local-only address, which cannot work on phones.');
       }
 
       const result = await saveToIndexedDB(
