@@ -186,6 +186,7 @@ serve(async (req) => {
         success: true,
         serverUrlConfigured: Boolean(home.url),
         cloudKeyConfigured: Boolean(home.key),
+        urlHint: (()=>{const r=(Deno.env.get("KHAYABEATS_SERVER_URL")||"").trim(); if(!r) return "empty"; if(r.includes("onrender.com")) return "render-url"; if(r.includes(".ts.net")) return "tailscale"; return "other:"+r.length;})(),
         ...health,
       });
     }
