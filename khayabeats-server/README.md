@@ -1,212 +1,64 @@
-# 🎵 KHAYABEATS Private Audio Server
+# KhayaBeats Home Music Server (Windows)
 
-A professional yt-dlp based audio streaming server for KHAYABEATS.
+Your Windows PC is the music server. YouTube trusts home internet connections far
+more than cloud servers (Render, VPS), which is why it always worked on your PC.
+Tailscale Funnel gives the PC a free, permanent `https://....ts.net` address so the
+website and the Android app can reach it from anywhere - no router changes.
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    KHAYABEATS SYSTEM                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   ┌─────────────┐         ┌──────────────────────┐         │
-│   │   Users     │ ───────▶│   khayabeats-api     │         │
-│   │  (Mobile/   │         │    (Port 3001)       │         │
-│   │   Desktop)  │         │                      │         │
-│   └─────────────┘         │  • Stream audio      │         │
-│                           │  • Manage cache      │         │
-│                           │  • Handle requests   │         │
-│                           └──────────┬───────────┘         │
-│                                      │                      │
-│                                      ▼                      │
-│                           ┌──────────────────────┐         │
-│                           │   yt-engine          │         │
-│                           │    (Port 3002)       │         │
-│                           │                      │         │
-│                           │  • Queue downloads   │         │
-│                           │  • Run yt-dlp        │         │
-│                           │  • Search YouTube    │         │
-│                           └──────────────────────┘         │
-│                                                             │
-│   ┌──────────────────────────────────────────────────┐     │
-│   │              storage/music-cache/                 │     │
-│   │                                                   │     │
-│   │  song1.mp3  song2.mp3  song3.mp3  ...            │     │
-│   │                                                   │     │
-│   │  (Cached songs - stream to thousands of users)   │     │
-│   └──────────────────────────────────────────────────┘     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```text
+Phone / website  ->  KhayaBeats cloud function  ->  signed link  ->  Tailscale Funnel  ->  your PC (port 3001)  ->  yt-dlp
 ```
 
-## Quick Start
+## One-time setup
 
-### Prerequisites
-- Node.js 18+
-- yt-dlp installed
+1. On GitHub, open the KhayaBeats repository > **Code** > **Download ZIP**, then extract it
+   (for example to `C:\KhayaBeats`). Or `git clone` it.
+2. Create a free account at https://tailscale.com (Google sign-in is fine).
+3. Open `khayabeats-server\windows` and double-click **INSTALL.bat**. Click **Yes** when Windows asks.
+   It installs Node.js, Tailscale, FFmpeg and yt-dlp, creates your private key, signs you in to
+   Tailscale, turns on the public address, stops the PC from sleeping on mains power, and adds
+   the server to Windows startup.
+4. If Tailscale shows a link to **enable Funnel / HTTPS**, open it and approve.
+5. Notepad opens **SETUP-INFO.txt** with two values: the **address** and the **key**.
+   Give both to the KhayaBeats app setup (the Lovable chat asks for them in a secure form).
+   Never post the key or upload that file.
 
-### Installation
+## Everyday buttons (in `khayabeats-server\windows`)
 
-1. **Install yt-dlp**
+| File | What it does |
+| --- | --- |
+| `START.bat` | Starts the server (also runs automatically when Windows signs in). Keep its window open. |
+| `STOP.bat` | Stops the server and closes the public address. |
+| `STATUS.bat` | Checks the server, the YouTube test, and whether the internet can reach it. |
+| `UPDATE.bat` | Updates yt-dlp (fixes most "YouTube changed something" errors). |
+| `IMPORT-COOKIES.bat` | Loads an exported YouTube `cookies.txt` if YouTube starts asking for sign-in. |
+| `UNINSTALL.bat` | Removes auto-start and the public address. |
 
-   Windows:
-   ```bash
-   # Download from https://github.com/yt-dlp/yt-dlp/releases
-   # Place yt-dlp.exe in khayabeats-server/yt-engine/
-   ```
+## Keep in mind
 
-   macOS/Linux:
-   ```bash
-   pip install yt-dlp
-   # OR
-   brew install yt-dlp
-   ```
+- The PC must be **on, awake and online** for songs to play. Downloaded songs in the app still play offline.
+- Songs are cached in `storage\music-cache`, so repeat plays are instant and save bandwidth.
+- Capacity depends on your home upload speed. Fine for launch and early users.
+- After pulling new code from GitHub: close the server window, run `UPDATE.bat`, then `START.bat`.
 
-2. **Install dependencies**
-   ```bash
-   cd khayabeats-server
-   npm install
-   ```
+## Security
 
-3. **Start the servers**
+- The server only listens on `127.0.0.1`; the only way in from outside is the Tailscale address.
+- Playback and downloads need a short-lived signed link created by the cloud function, so
+  nobody can use your PC as a free download service by guessing URLs.
+- Admin actions (cookies, diagnostics, self-test) need the private key.
+- Requests are rate-limited per IP.
 
-   Terminal 1 (YT Engine):
-   ```bash
-   npm run engine
-   ```
+## Endpoints
 
-   Terminal 2 (Main API):
-   ```bash
-   npm start
-   ```
+| Endpoint | Access |
+| --- | --- |
+| `GET /health`, `GET /auth-status` | Public, no secrets |
+| `GET /search`, `/artists/:id`, `/albums/:id`, `/cache/stats` | Public metadata |
+| `GET /stream/:videoId`, `GET /offline/download/:videoId` | Signed link or key |
+| `POST /audio-url`, `/self-test`, `/upload-cookies`, `/oauth-setup`, `/cache/cleanup`, `GET /diagnostics/recent`, `/cookies-status` | Key (`x-kb-key` header) |
 
-## API Endpoints
+## Other systems
 
-### Main API (Port 3001)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/stream/:videoId` | GET | Stream audio |
-| `/audio-url` | POST | Get stream URL |
-| `/search?q=` | GET | Search YouTube |
-| `/offline/download/:videoId` | GET | Download for offline |
-| `/cache/stats` | GET | Cache statistics |
-
-### YT Engine (Port 3002)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Engine health |
-| `/fetch` | POST | Download audio |
-| `/search?q=` | GET | Search YouTube |
-| `/queue` | GET | Queue status |
-
-## How It Works
-
-### Streaming Flow
-
-1. User requests a song
-2. API checks cache
-3. If cached → stream immediately
-4. If not cached:
-   - Add to download queue
-   - yt-dlp downloads audio
-   - Save to cache
-   - Stream to user
-
-### Concurrent Handling
-
-- Max 10 concurrent downloads
-- Unlimited concurrent streams (from cache)
-- Queue system prevents overload
-
-### Cache Management
-
-- Songs cached for 30 days by default
-- Automatic cleanup runs hourly
-- Max cache size: 50GB (configurable)
-
-## Configuration
-
-Edit `server.js` CONFIG object:
-
-```javascript
-const CONFIG = {
-  CACHE_DIR: './storage/music-cache',
-  TEMP_DIR: './storage/temp',
-  YT_ENGINE_URL: 'http://localhost:3002',
-  MAX_CACHE_SIZE_GB: 50,
-  CACHE_CLEANUP_INTERVAL: 60 * 60 * 1000,
-};
-```
-
-## Integration with KHAYABEATS App
-
-Update your Supabase edge function to point to your server:
-
-```typescript
-// In supabase/functions/get-audio-stream/index.ts
-const YOUR_SERVER_URL = 'http://YOUR_PC_IP:3001';
-
-// Fetch audio
-const response = await fetch(`${YOUR_SERVER_URL}/audio-url`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ videoId }),
-});
-```
-
-## Production Deployment
-
-For production, consider:
-
-1. **VPS/Cloud Server**
-   - DigitalOcean, Vultr, Linode
-   - Minimum 2GB RAM, 50GB SSD
-
-2. **Reverse Proxy**
-   - nginx for SSL/HTTPS
-   - Load balancing
-
-3. **Process Manager**
-   ```bash
-   npm install pm2 -g
-   pm2 start server.js --name kb-api
-   pm2 start yt-engine/engine.js --name kb-engine
-   ```
-
-4. **Firewall**
-   - Only expose port 3001
-   - Keep 3002 internal
-
-## Troubleshooting
-
-### yt-dlp not found
-```bash
-# Check if installed
-yt-dlp --version
-
-# Download manually for Windows
-# https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
-```
-
-### Permission errors
-```bash
-# Linux/Mac
-chmod +x yt-engine/yt-dlp
-```
-
-### Download failures
-- Check internet connection
-- Verify YouTube video is available
-- Check yt-dlp is up to date
-
-## Support
-
-- 📧 Email: khayabeats@gmail.com
-- 📱 Phone: +27 61 461 7733
-
----
-
-Made with ❤️ by KHAYABEATS
+Run `npm install && npm start` with `KB_SERVER_KEY` set in `.env`, and publish port 3001 with
+`tailscale funnel --bg 3001`. yt-dlp must be on PATH or next to `server.js`.

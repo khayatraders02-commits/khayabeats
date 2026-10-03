@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# KhayaBeats home server private/runtime files
+khayabeats-server/.env
+khayabeats-server/cookies.txt
+khayabeats-server/SETUP-INFO.txt
+khayabeats-server/yt-dlp.exe
+khayabeats-server/yt-dlp
+khayabeats-server/storage/
+khayabeats-server/logs/
