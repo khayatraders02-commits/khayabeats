@@ -45,10 +45,15 @@ const PROXY_HOST_SUFFIXES = [
 ];
 
 function getHomeConfig() {
-  const url = (Deno.env.get("KHAYABEATS_SERVER_URL") || "").trim().replace(/\/$/, "");
-  const key = (Deno.env.get("KHAYABEATS_SERVER_KEY") || "").trim();
-  const usable = url.startsWith("https://") && !url.includes("onrender.com");
-  return { url: usable ? url : "", key };
+  let raw = (Deno.env.get("KHAYABEATS_SERVER_URL") || "").trim().replace(/^["']|["']$/g, "");
+  raw = raw.replace(/^(address|url)\s*[:=]\s*/i, "").trim();
+  if (raw && !/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  raw = raw.replace(/^http:\/\//i, "https://");
+  let url = "";
+  try { const u = new URL(raw); url = `https://${u.host}`; } catch { url = ""; }
+  if (url.includes("onrender.com")) url = "";
+  const key = (Deno.env.get("KHAYABEATS_SERVER_KEY") || "").trim().replace(/^(key)\s*[:=]\s*/i, "");
+  return { url, key, rawHost: raw ? raw.replace(/^https?:\/\//i, "").split(/[/.]/)[0] + "…" : "" };
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -181,6 +186,7 @@ serve(async (req) => {
         success: true,
         serverUrlConfigured: Boolean(home.url),
         cloudKeyConfigured: Boolean(home.key),
+        urlHint: (()=>{const r=(Deno.env.get("KHAYABEATS_SERVER_URL")||"").trim(); if(!r) return "empty"; if(r.includes("onrender.com")) return "render-url"; if(r.includes(".ts.net")) return "tailscale"; return "other:"+r.length;})(),
         ...health,
       });
     }
